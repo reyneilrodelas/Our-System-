@@ -1,3 +1,0 @@
-Google Maps API Key: AIzaSyAbQbELTiAJZzfJamxf-bSMDXe09V16Z58
-
-Note: This API key was originally stored in android/app/src/main/AndroidManifest.xml

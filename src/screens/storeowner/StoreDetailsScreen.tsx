@@ -327,7 +327,7 @@ const StoreDetailsScreen = () => {
                     onPress={() => navigation.goBack()}
                     activeOpacity={0.7}
                 >
-                    <Ionicons name="chevron-back" size={24} color="#fff" />
+                     <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Store Details</Text>
                 <View style={{ width: 24 }} />
@@ -575,7 +575,8 @@ const styles = StyleSheet.create({
         marginBottom: 24,
     },
     backButton: {
-        padding: 8,
+        padding: 5,
+        marginTop: 10,
     },
     backButtonText: {
         color: '#6c5ce7',
@@ -586,18 +587,19 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: 16,
+        padding: 25,
         backgroundColor: '#6c5ce7',
         elevation: 4,
     },
     headerTitle: {
-        fontSize: 20,
+        fontSize: 25,
         fontWeight: 'bold',
         color: '#fff',
+        marginTop: 10,
     },
     storeImage: {
         width: '100%',
-        height: 220,
+        height: 270,
     },
     imagePlaceholder: {
         width: '100%',
@@ -755,9 +757,10 @@ const styles = StyleSheet.create({
     },
     cancelButtonText: {
         color: '#2d3436',
-        fontWeight: '600',
+        fontWeight: '700',
         fontSize: 16,
         textAlign: 'center',
+        marginTop: 8,
     },
     saveButton: {
         backgroundColor: '#6c5ce7',

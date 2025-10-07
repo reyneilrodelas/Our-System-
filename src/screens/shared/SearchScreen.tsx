@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -64,27 +64,32 @@ export default function SearchScreen() {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
     const scaleAnim = useRef(new Animated.Value(0.9)).current;
+    const headerHeightAnim = useRef(new Animated.Value(0)).current;
+    const searchSectionHeightAnim = useRef(new Animated.Value(0)).current;
     const searchInputRef = useRef<TextInput>(null);
+
+    // Debounce timer ref
+    const suggestionTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Animation on mount
     useEffect(() => {
         Animated.parallel([
             Animated.timing(fadeAnim, {
                 toValue: 1,
-                duration: 800,
-                useNativeDriver: true,
+                duration: 600,
+                useNativeDriver: false,
             }),
             Animated.spring(slideAnim, {
                 toValue: 0,
                 tension: 50,
                 friction: 8,
-                useNativeDriver: true,
+                useNativeDriver: false,
             }),
             Animated.spring(scaleAnim, {
                 toValue: 1,
                 tension: 50,
                 friction: 8,
-                useNativeDriver: true,
+                useNativeDriver: false,
             }),
         ]).start();
     }, []);
@@ -94,15 +99,65 @@ export default function SearchScreen() {
         loadRecentSearches();
     }, []);
 
-    // Search suggestions
+    // Search suggestions with debouncing
     useEffect(() => {
+        // Clear previous timer
+        if (suggestionTimerRef.current) {
+            clearTimeout(suggestionTimerRef.current);
+        }
+
         if (searchQuery.length > 2) {
-            fetchSuggestions();
+            // Debounce the suggestion fetch
+            suggestionTimerRef.current = setTimeout(() => {
+                fetchSuggestions();
+            }, 300);
         } else {
             setSuggestions([]);
             setShowSuggestions(false);
         }
+
+        // Cleanup
+        return () => {
+            if (suggestionTimerRef.current) {
+                clearTimeout(suggestionTimerRef.current);
+            }
+        };
     }, [searchQuery]);
+
+    // Animate header when showing results
+    useEffect(() => {
+        if (searchMode === 'results') {
+            Animated.parallel([
+                Animated.spring(headerHeightAnim, {
+                    toValue: 1,
+                    tension: 80,
+                    friction: 10,
+                    useNativeDriver: false,
+                }),
+                Animated.spring(searchSectionHeightAnim, {
+                    toValue: 1,
+                    tension: 80,
+                    friction: 10,
+                    useNativeDriver: false,
+                }),
+            ]).start();
+        } else {
+            Animated.parallel([
+                Animated.spring(headerHeightAnim, {
+                    toValue: 0,
+                    tension: 80,
+                    friction: 10,
+                    useNativeDriver: false,
+                }),
+                Animated.spring(searchSectionHeightAnim, {
+                    toValue: 0,
+                    tension: 80,
+                    friction: 10,
+                    useNativeDriver: false,
+                }),
+            ]).start();
+        }
+    }, [searchMode]);
 
     const loadRecentSearches = async () => {
         try {
@@ -137,7 +192,7 @@ export default function SearchScreen() {
         }
     };
 
-    const searchProduct = async (query?: string) => {
+    const searchProduct = useCallback(async (query?: string) => {
         const trimmedQuery = (query || searchQuery).trim();
 
         if (!trimmedQuery) {
@@ -184,9 +239,9 @@ export default function SearchScreen() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [searchQuery]);
 
-    const navigateToResultScreen = async (product: Product) => {
+    const navigateToResultScreen = useCallback(async (product: Product) => {
         if (product && !isNavigating) {
             setIsNavigating(true);
             setSelectedProduct(product);
@@ -248,9 +303,9 @@ export default function SearchScreen() {
                 setIsNavigating(false);
             }
         }
-    };
+    }, [isNavigating, storesCache, navigation]);
 
-    const refreshData = async () => {
+    const refreshData = useCallback(async () => {
         setRefreshing(true);
         setSearchResults([]);
         setSelectedProduct(null);
@@ -259,24 +314,38 @@ export default function SearchScreen() {
         setShowSuggestions(false);
         await loadRecentSearches();
         setRefreshing(false);
-    };
+    }, []);
 
-    const selectSuggestion = (product: Product) => {
+    const selectSuggestion = useCallback((product: Product) => {
         setSearchQuery(product.name);
         setShowSuggestions(false);
         searchProduct(product.name);
-    };
+    }, [searchProduct]);
 
-    const clearSearch = () => {
+    const clearSearch = useCallback(() => {
         setSearchQuery('');
         setSearchResults([]);
         setSelectedProduct(null);
         setSearchMode('idle');
         setShowSuggestions(false);
         searchInputRef.current?.focus();
-    };
+    }, []);
 
-    const renderProductItem = ({ item, index }: { item: Product; index: number }) => (
+    const handleSearchQueryChange = useCallback((text: string) => {
+        setSearchQuery(text);
+    }, []);
+
+    const handleSubmitEditing = useCallback(() => {
+        searchProduct();
+    }, [searchProduct]);
+
+    const handleFocus = useCallback(() => {
+        if (suggestions.length > 0) {
+            setShowSuggestions(true);
+        }
+    }, [suggestions.length]);
+
+    const renderProductItem = useCallback(({ item, index }: { item: Product; index: number }) => (
         <Animatable.View
             animation="fadeInUp"
             duration={400}
@@ -315,16 +384,18 @@ export default function SearchScreen() {
                         </View>
                     )}
 
-                    <View style={styles.productItemBarcodeContainer}>
-                        <MaterialIcons name="qr-code" size={12} color="#6B7280" />
-                        <Text style={styles.productItemBarcode}>{item.barcode}</Text>
-                    </View>
-
                     {item.description && (
                         <Text style={styles.productItemDescription} numberOfLines={2}>
                             {item.description}
                         </Text>
                     )}
+                   
+                    <View style={styles.productItemBarcodeContainer}>
+                        <MaterialIcons name="qr-code" size={12} color="#6B7280" />
+                        <Text style={styles.productItemBarcode}>{item.barcode}</Text>
+                    </View>
+
+                   
                 </View>
 
                 <View style={styles.productItemArrow}>
@@ -332,9 +403,9 @@ export default function SearchScreen() {
                 </View>
             </TouchableOpacity>
         </Animatable.View>
-    );
+    ), [navigateToResultScreen, isNavigating]);
 
-    const renderEmptyState = () => (
+    const renderEmptyState = useCallback(() => (
         <Animatable.View
             animation="fadeIn"
             duration={600}
@@ -348,7 +419,149 @@ export default function SearchScreen() {
                 Try searching with different keywords or check the spelling
             </Text>
         </Animatable.View>
-    );
+    ), []);
+
+    const ListHeaderComponent = useMemo(() => (
+        <>
+            {/* Search Input */}
+            <View style={styles.searchInputContainer}>
+                <View style={styles.searchWrapper}>
+                    <MaterialIcons name="search" size={24} color="#9CA3AF" style={styles.searchIcon} />
+                    <TextInput
+                        ref={searchInputRef}
+                        style={styles.searchInput}
+                        placeholder="Search by product name, brand, or barcode"
+                        placeholderTextColor="#9CA3AF"
+                        value={searchQuery}
+                        onChangeText={handleSearchQueryChange}
+                        onSubmitEditing={handleSubmitEditing}
+                        onFocus={handleFocus}
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        returnKeyType="search"
+                        blurOnSubmit={false}
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
+                            <MaterialIcons name="clear" size={20} color="#9CA3AF" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {/* Search Button */}
+                <TouchableOpacity
+                    style={[
+                        styles.searchButton,
+                        (isLoading || !searchQuery.trim()) && styles.disabledButton
+                    ]}
+                    onPress={handleSubmitEditing}
+                    disabled={isLoading || !searchQuery.trim()}
+                    activeOpacity={0.8}
+                >
+                    {isLoading ? (
+                        <ActivityIndicator color="white" size="small" />
+                    ) : (
+                        <View style={styles.searchButtonContent}>
+                            <MaterialIcons name="search" size={20} color="white" />
+                            <Text style={styles.searchButtonText}>Search</Text>
+                        </View>
+                    )}
+                </TouchableOpacity>
+            </View>
+
+            {/* Search Suggestions */}
+            {showSuggestions && suggestions.length > 0 && (
+                <Animatable.View
+                    animation="fadeInUp"
+                    duration={300}
+                    style={styles.suggestionsContainer}
+                >
+                    <Text style={styles.suggestionsTitle}>Suggestions</Text>
+                    {suggestions.map((product) => (
+                        <TouchableOpacity
+                            key={product.id}
+                            style={styles.suggestionItem}
+                            onPress={() => selectSuggestion(product)}
+                            activeOpacity={0.7}
+                        >
+                            <MaterialIcons name="history" size={16} color="#6B7280" />
+                            <Text style={styles.suggestionText} numberOfLines={1}>
+                                {product.name}
+                            </Text>
+                            {product.brand && (
+                                <Text style={styles.suggestionBrand}>• {product.brand}</Text>
+                            )}
+                        </TouchableOpacity>
+                    ))}
+                </Animatable.View>
+            )}
+
+            {/* Recent Searches - Show only when not in search mode */}
+            {searchMode === 'idle' && recentSearches.length > 0 && (
+                <Animatable.View
+                    animation="fadeIn"
+                    duration={500}
+                    style={styles.recentContainer}
+                >
+                    <Text style={styles.recentTitle}>Recently Searched</Text>
+                    <View style={styles.recentGrid}>
+                        {recentSearches.map((product) => (
+                            <TouchableOpacity
+                                key={product.id}
+                                style={styles.recentItem}
+                                onPress={() => selectSuggestion(product)}
+                                activeOpacity={0.7}
+                            >
+                                <MaterialIcons name="history" size={16} color="#6366F1" />
+                                <Text style={styles.recentText} numberOfLines={1}>
+                                    {product.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </Animatable.View>
+            )}
+
+            {/* Loading State */}
+            {isLoading && (
+                <Animatable.View
+                    animation="fadeIn"
+                    duration={300}
+                    style={styles.loadingContainer}
+                >
+                    <ActivityIndicator size="large" color="#6366F1" />
+                    <Text style={styles.loadingText}>Searching products...</Text>
+                </Animatable.View>
+            )}
+
+            {/* Results Header */}
+            {searchMode === 'results' && (
+                <View style={styles.resultsHeader}>
+                    <Text style={styles.resultsTitle}>
+                        Found {searchResults.length} product{searchResults.length !== 1 ? 's' : ''}
+                    </Text>
+                    <TouchableOpacity onPress={clearSearch} style={styles.clearResultsButton}>
+                        <Text style={styles.clearResultsText}>Clear</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+        </>
+    ), [
+        searchQuery,
+        isLoading,
+        showSuggestions,
+        suggestions,
+        searchMode,
+        recentSearches,
+        searchResults.length,
+        handleSearchQueryChange,
+        handleSubmitEditing,
+        handleFocus,
+        clearSearch,
+        selectSuggestion
+    ]);
+
+    const keyExtractor = useCallback((item: Product) => item.id, []);
 
     return (
         <>
@@ -364,18 +577,47 @@ export default function SearchScreen() {
                     style={[
                         styles.header,
                         {
+                            height: headerHeightAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [height * 0.35, height * 0.12],
+                            }),
                             opacity: fadeAnim,
-                            transform: [{ translateY: slideAnim }]
+                            transform: [{ translateY: slideAnim }],
                         }
                     ]}
                 >
-                    <View style={styles.headerContent}>
-                        <View style={styles.iconContainer}>
+                    <Animated.View
+                        style={[
+                            styles.headerContent,
+                            {
+                                opacity: headerHeightAnim.interpolate({
+                                    inputRange: [0, 0.3, 1],
+                                    outputRange: [1, 0.8, 0],
+                                }),
+                                transform: [{
+                                    scale: headerHeightAnim.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 0.5],
+                                    })
+                                }]
+                            }
+                        ]}
+                    >
+                        <Animated.View
+                            style={[
+                                styles.iconContainer,
+                                {
+                                    transform: [{ scale: scaleAnim }]
+                                }
+                            ]}
+                        >
                             <MaterialIcons name="search" size={48} color="rgba(255,255,255,0.9)" />
-                        </View>
+                        </Animated.View>
                         <Text style={styles.title}>Product Finder</Text>
-                        <Text style={styles.subtitle}>Discover products and find the best deals near you</Text>
-                    </View>
+                        <Text style={styles.subtitle}>
+                            Discover products and find the best deals near you
+                        </Text>
+                    </Animated.View>
                 </Animated.View>
 
                 {/* Enhanced Search Section */}
@@ -383,14 +625,24 @@ export default function SearchScreen() {
                     style={[
                         styles.searchSection,
                         {
+                            height: searchSectionHeightAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [height * 0.65, height * 0.88],
+                            }),
                             opacity: fadeAnim,
-                            transform: [{ translateY: slideAnim }, { scale: scaleAnim }]
+                            transform: [{ scale: scaleAnim }],
                         }
                     ]}
                 >
                     <BlurView intensity={20} tint="light" style={styles.searchBlur}>
-                        <ScrollView
-                            contentContainerStyle={styles.scrollContent}
+                        <FlatList
+                            data={searchMode === 'results' ? searchResults : []}
+                            renderItem={renderProductItem}
+                            keyExtractor={keyExtractor}
+                            ListHeaderComponent={ListHeaderComponent}
+                            ListEmptyComponent={searchMode === 'results' ? renderEmptyState : null}
+                            contentContainerStyle={styles.flatListContent}
+                            showsVerticalScrollIndicator={false}
                             refreshControl={
                                 <RefreshControl
                                     refreshing={refreshing}
@@ -399,144 +651,8 @@ export default function SearchScreen() {
                                 />
                             }
                             keyboardShouldPersistTaps="handled"
-                        >
-                            {/* Search Input */}
-                            <View style={styles.searchInputContainer}>
-                                <View style={styles.searchWrapper}>
-                                    <MaterialIcons name="search" size={24} color="#9CA3AF" style={styles.searchIcon} />
-                                    <TextInput
-                                        ref={searchInputRef}
-                                        style={styles.searchInput}
-                                        placeholder="Search by product name, brand, or barcode"
-                                        placeholderTextColor="#9CA3AF"
-                                        value={searchQuery}
-                                        onChangeText={setSearchQuery}
-                                        onSubmitEditing={() => searchProduct()}
-                                        onFocus={() => setShowSuggestions(suggestions.length > 0)}
-                                        autoCorrect={false}
-                                        autoCapitalize="none"
-                                        returnKeyType="search"
-                                    />
-                                    {searchQuery.length > 0 && (
-                                        <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
-                                            <MaterialIcons name="clear" size={20} color="#9CA3AF" />
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-
-                                {/* Search Button */}
-                                <TouchableOpacity
-                                    style={[
-                                        styles.searchButton,
-                                        (isLoading || !searchQuery.trim()) && styles.disabledButton
-                                    ]}
-                                    onPress={() => searchProduct()}
-                                    disabled={isLoading || !searchQuery.trim()}
-                                    activeOpacity={0.8}
-                                >
-                                    {isLoading ? (
-                                        <ActivityIndicator color="white" size="small" />
-                                    ) : (
-                                        <View style={styles.searchButtonContent}>
-                                            <MaterialIcons name="search" size={20} color="white" />
-                                            <Text style={styles.searchButtonText}>Search</Text>
-                                        </View>
-                                    )}
-                                </TouchableOpacity>
-                            </View>
-
-                            {/* Search Suggestions */}
-                            {showSuggestions && suggestions.length > 0 && (
-                                <Animatable.View
-                                    animation="fadeInUp"
-                                    duration={300}
-                                    style={styles.suggestionsContainer}
-                                >
-                                    <Text style={styles.suggestionsTitle}>Suggestions</Text>
-                                    {suggestions.map((product, index) => (
-                                        <TouchableOpacity
-                                            key={product.id}
-                                            style={styles.suggestionItem}
-                                            onPress={() => selectSuggestion(product)}
-                                            activeOpacity={0.7}
-                                        >
-                                            <MaterialIcons name="history" size={16} color="#6B7280" />
-                                            <Text style={styles.suggestionText} numberOfLines={1}>
-                                                {product.name}
-                                            </Text>
-                                            {product.brand && (
-                                                <Text style={styles.suggestionBrand}>• {product.brand}</Text>
-                                            )}
-                                        </TouchableOpacity>
-                                    ))}
-                                </Animatable.View>
-                            )}
-
-                            {/* Recent Searches - Show only when not in search mode */}
-                            {searchMode === 'idle' && recentSearches.length > 0 && (
-                                <Animatable.View
-                                    animation="fadeIn"
-                                    duration={500}
-                                    style={styles.recentContainer}
-                                >
-                                    <Text style={styles.recentTitle}>Recently Searched</Text>
-                                    <View style={styles.recentGrid}>
-                                        {recentSearches.map((product, index) => (
-                                            <TouchableOpacity
-                                                key={product.id}
-                                                style={styles.recentItem}
-                                                onPress={() => selectSuggestion(product)}
-                                                activeOpacity={0.7}
-                                            >
-                                                <MaterialIcons name="history" size={16} color="#6366F1" />
-                                                <Text style={styles.recentText} numberOfLines={1}>
-                                                    {product.name}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        ))}
-                                    </View>
-                                </Animatable.View>
-                            )}
-
-                            {/* Loading State */}
-                            {isLoading && (
-                                <Animatable.View
-                                    animation="fadeIn"
-                                    duration={300}
-                                    style={styles.loadingContainer}
-                                >
-                                    <ActivityIndicator size="large" color="#6366F1" />
-                                    <Text style={styles.loadingText}>Searching products...</Text>
-                                </Animatable.View>
-                            )}
-
-                            {/* Search Results */}
-                            {searchMode === 'results' && (
-                                <Animatable.View
-                                    animation="fadeInUp"
-                                    duration={600}
-                                    style={styles.resultsContainer}
-                                >
-                                    <View style={styles.resultsHeader}>
-                                        <Text style={styles.resultsTitle}>
-                                            Found {searchResults.length} product{searchResults.length !== 1 ? 's' : ''}
-                                        </Text>
-                                        <TouchableOpacity onPress={clearSearch} style={styles.clearResultsButton}>
-                                            <Text style={styles.clearResultsText}>Clear</Text>
-                                        </TouchableOpacity>
-                                    </View>
-
-                                    <FlatList
-                                        data={searchResults}
-                                        renderItem={renderProductItem}
-                                        keyExtractor={(item) => item.id}
-                                        scrollEnabled={false}
-                                        showsVerticalScrollIndicator={false}
-                                        ListEmptyComponent={renderEmptyState}
-                                    />
-                                </Animatable.View>
-                            )}
-                        </ScrollView>
+                            removeClippedSubviews={false}
+                        />
                     </BlurView>
                 </Animated.View>
             </LinearGradient>
@@ -557,7 +673,6 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     header: {
-        flex: 0.4,
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 20,
@@ -593,7 +708,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
     },
     searchSection: {
-        flex: 0.6,
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         overflow: 'hidden',
@@ -602,7 +716,7 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: 'rgba(255, 255, 255, 0.95)',
     },
-    scrollContent: {
+    flatListContent: {
         flexGrow: 1,
         paddingHorizontal: 20,
         paddingVertical: 30,
@@ -757,14 +871,12 @@ const styles = StyleSheet.create({
         color: '#6B7280',
         fontWeight: '500',
     },
-    resultsContainer: {
-        marginTop: 8,
-    },
     resultsHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 16,
+        marginTop: 8,
     },
     resultsTitle: {
         fontSize: 18,
@@ -823,7 +935,7 @@ const styles = StyleSheet.create({
     },
     productItemName: {
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '800',
         color: '#1F2937',
         marginBottom: 4,
         lineHeight: 20,
@@ -852,8 +964,9 @@ const styles = StyleSheet.create({
         fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     },
     productItemDescription: {
-        fontSize: 12,
-        color: '#6B7280',
+        fontSize: 13,
+        fontWeight: '500',
+        color: '#0c420aff',
         lineHeight: 16,
     },
     productItemArrow: {

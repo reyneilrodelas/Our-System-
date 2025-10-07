@@ -7,7 +7,10 @@ import {
     Image,
     TextInput,
     ScrollView,
-    ActivityIndicator
+    ActivityIndicator,
+    KeyboardAvoidingView,
+    Platform,
+    Keyboard
 } from 'react-native';
 import { StyledAlert } from '../components/StyledAlert';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -40,16 +43,42 @@ export default function ProfileEditScreen() {
     const [alertVisible, setAlertVisible] = useState(false);
     const [alertTitle, setAlertTitle] = useState('');
     const [alertMessage, setAlertMessage] = useState('');
+    const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
     useEffect(() => {
         fetchProfile();
+
+        // Keyboard listeners
+        const keyboardDidShowListener = Keyboard.addListener(
+            'keyboardDidShow',
+            () => {
+                setKeyboardVisible(true);
+            }
+        );
+        const keyboardDidHideListener = Keyboard.addListener(
+            'keyboardDidHide',
+            () => {
+                setKeyboardVisible(false);
+            }
+        );
+
+        return () => {
+            keyboardDidHideListener.remove();
+            keyboardDidShowListener.remove();
+        };
     }, []);
 
     const fetchProfile = async () => {
         try {
             setLoading(true);
             const cachedProfile = await AsyncStorage.getItem('profileCache');
-            const profileData = cachedProfile ? JSON.parse(cachedProfile) : null;
+            let profileData = cachedProfile ? JSON.parse(cachedProfile) : null;
+
+            // If address is "No address provided", set it to empty string
+            if (profileData && profileData.address === "No address provided") {
+                profileData.address = "";
+            }
+
             setProfile(profileData);
         } catch (error) {
             console.error('Error fetching profile:', error);
@@ -68,9 +97,7 @@ export default function ProfileEditScreen() {
     };
 
     const handleAvatarSelect = (avatarIndex: number) => {
-        // Store the avatar index as a string
-        const avatarKey = String(avatarIndex + 1); // Using 1-based index to match your require statements
-
+        const avatarKey = String(avatarIndex + 1);
         setProfile((prevProfile) => {
             if (prevProfile) {
                 const updatedProfile = { ...prevProfile, avatar_url: avatarKey };
@@ -80,6 +107,7 @@ export default function ProfileEditScreen() {
             return prevProfile;
         });
     };
+
     const handleBackPress = () => {
         navigation.goBack();
     };
@@ -92,25 +120,33 @@ export default function ProfileEditScreen() {
             const { data: { user }, error: authError } = await supabase.auth.getUser();
             if (authError || !user) throw authError || new Error('No user logged in');
 
+            // Prepare data for update - don't save empty address as "No address provided"
+            const updateData = {
+                username: profile.username,
+                avatar_url: profile.avatar_url,
+                address: profile.address.trim() || null // Save empty addresses as null
+            };
+
             // Update profile in Supabase
             const { error: updateError } = await supabase
                 .from('profiles')
-                .update({
-                    username: profile.username,
-                    address: profile.address,
-                    avatar_url: profile.avatar_url
-                })
+                .update(updateData)
                 .eq('id', user.id);
 
             if (updateError) throw updateError;
 
-            // Update cache
-            await AsyncStorage.setItem('profileCache', JSON.stringify(profile));
+            // Update cache - don't store "No address provided"
+            const profileToCache = {
+                ...profile,
+                address: profile.address.trim() || "" // Store empty string instead of "No address provided"
+            };
+            await AsyncStorage.setItem('profileCache', JSON.stringify(profileToCache));
 
             setAlertTitle('Success');
             setAlertMessage('Profile updated successfully');
             setAlertVisible(true);
             navigation.goBack();
+
         } catch (error) {
             console.error('Error updating profile:', error);
             setAlertTitle('Error');
@@ -124,12 +160,10 @@ export default function ProfileEditScreen() {
     const getAvatarSource = (avatarUrl: string | undefined) => {
         if (!avatarUrl) return require('../../assets/images/default.png');
 
-        // Check if it's one of our predefined avatars
         if (avatarMap[avatarUrl as keyof typeof avatarMap]) {
             return avatarMap[avatarUrl as keyof typeof avatarMap];
         }
 
-        // Otherwise treat it as a URI
         return { uri: avatarUrl };
     };
 
@@ -148,6 +182,11 @@ export default function ProfileEditScreen() {
         ));
     };
 
+    // Function to clear the address field
+    const clearAddress = () => {
+        handleInputChange('address', '');
+    };
+
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
@@ -157,77 +196,102 @@ export default function ProfileEditScreen() {
     }
 
     return (
-        <View style={styles.container}>
-            <ScrollView>
-                 <TouchableOpacity
-                                        style={styles.backButton}
-                                        onPress={handleBackPress}
-                                    >
-                                        <MaterialIcons name="arrow-back" size={28} color="black" />
-                                    </TouchableOpacity>
+        <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+        >
+            <ScrollView
+                contentContainerStyle={[
+                    styles.scrollContainer,
+                    isKeyboardVisible && styles.scrollContainerKeyboardOpen
+                ]}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+            >
+                <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={handleBackPress}
+                >
+                    <MaterialIcons name="arrow-back" size={28} color="black" />
+                </TouchableOpacity>
+
                 <Text style={styles.title}>Edit Profile</Text>
 
                 <View style={styles.profileHeader}>
-                <View style={styles.avatarContainer}>
-                    <Image
-                        source={getAvatarSource(profile?.avatar_url)}
-                        style={styles.avatar}
-                    />
-                    <TouchableOpacity style={styles.editAvatarButton}>
-                        <MaterialIcons name="edit" size={18} color="#fff" />
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            <Text style={styles.sectionTitle}>Choose Your Avatar</Text>
-            <View style={styles.avatarsContainer}>
-                {renderPredefinedAvatars()}
-            </View>
-
-            <View style={styles.formContainer}>
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Name</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={profile?.username || ''}
-                        onChangeText={(value) => handleInputChange('username', value)}
-                        placeholder="Enter your name"
-                    />
+                    <View style={styles.avatarContainer}>
+                        <Image
+                            source={getAvatarSource(profile?.avatar_url)}
+                            style={styles.avatar}
+                        />
+                        <TouchableOpacity style={styles.editAvatarButton}>
+                            <MaterialIcons name="edit" size={18} color="#fff" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Email</Text>
-                    <TextInput
-                        style={[styles.input, styles.disabledInput]}
-                        value={profile?.email || ''}
-                        editable={false}
-                        placeholder="Email"
-                    />
+                <Text style={styles.sectionTitle}>Choose Your Avatar</Text>
+                <View style={styles.avatarsContainer}>
+                    {renderPredefinedAvatars()}
                 </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Location</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={profile?.address || ''}
-                        onChangeText={(value) => handleInputChange('address', value)}
-                        placeholder="Enter your location"
-                        multiline
-                    />
-                </View>
-            </View>
+                <View style={styles.formContainer}>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Name</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={profile?.username || ''}
+                            onChangeText={(value) => handleInputChange('username', value)}
+                            placeholder="Enter your name"
+                            returnKeyType="next"
+                        />
+                    </View>
 
-            <TouchableOpacity
-                style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={saving}
-            >
-                {saving ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <Text style={styles.saveButtonText}>Save Changes</Text>
-                )}
-            </TouchableOpacity>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Email</Text>
+                        <TextInput
+                            style={[styles.input, styles.disabledInput]}
+                            value={profile?.email || ''}
+                            editable={false}
+                            placeholder="Email"
+                        />
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                        <View style={styles.addressHeader}>
+                            <Text style={styles.label}>Location</Text>
+                            {profile?.address && (
+                                <TouchableOpacity onPress={clearAddress} style={styles.clearButton}>
+                                    <Text style={styles.clearButtonText}>Clear</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                        <TextInput
+                            style={styles.input}
+                            value={profile?.address || ''}
+                            onChangeText={(value) => handleInputChange('address', value)}
+                            placeholder="Enter your location"
+                            multiline
+                            textAlignVertical="top"
+                            returnKeyType="default"
+                        />
+                    </View>
+                </View>
+
+                <TouchableOpacity
+                    style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+                    onPress={handleSave}
+                    disabled={saving}
+                >
+                    {saving ? (
+                        <ActivityIndicator color="#fff" />
+                    ) : (
+                        <Text style={styles.saveButtonText}>Save Changes</Text>
+                    )}
+                </TouchableOpacity>
+
+                {/* Add extra space when keyboard is open */}
+                {isKeyboardVisible && <View style={styles.keyboardSpacer} />}
             </ScrollView>
 
             <StyledAlert
@@ -236,15 +300,21 @@ export default function ProfileEditScreen() {
                 message={alertMessage}
                 onClose={() => setAlertVisible(false)}
             />
-        </View>
+        </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        padding: 20,
         backgroundColor: '#e3f2ff79',
+    },
+    scrollContainer: {
+        padding: 20,
+        paddingBottom: 30,
+    },
+    scrollContainerKeyboardOpen: {
+        paddingBottom: 100,
     },
     loadingContainer: {
         flex: 1,
@@ -258,6 +328,7 @@ const styles = StyleSheet.create({
         color: '#1F2937',
         marginBottom: 20,
         textAlign: 'center',
+        marginTop: 20,
     },
     sectionTitle: {
         fontSize: 18,
@@ -321,11 +392,27 @@ const styles = StyleSheet.create({
     inputGroup: {
         marginBottom: 20,
     },
+    addressHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
     label: {
         fontSize: 16,
         fontWeight: '500',
         color: '#374151',
-        marginBottom: 8,
+    },
+    clearButton: {
+        backgroundColor: '#EF4444',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 6,
+    },
+    clearButtonText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '500',
     },
     input: {
         backgroundColor: '#fff',
@@ -357,14 +444,15 @@ const styles = StyleSheet.create({
     },
     backButton: {
         position: 'absolute',
-        top: 5,
+        top: 40,
         left: 5,
-        backgroundColor: 'rgba(255, 255, 255, 0.4)',
-        borderRadius: 50,
         width: 50,
         height: 50,
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 1,
+    },
+    keyboardSpacer: {
+        height: 150,
     },
 });

@@ -97,6 +97,25 @@ export default function Signup({ navigation }: SignupScreenProps) {
         return unmet ? unmet.text + ' is required' : null;
     };
 
+    const checkEmailExists = async (email: string): Promise<boolean> => {
+        try {
+            // Use Supabase Auth's signIn method to check if email exists
+            const { data, error } = await supabase.auth.signInWithOtp({
+                email,
+                options: {
+                    // This will fail if email doesn't exist, but we don't want to send OTP
+                    shouldCreateUser: false
+                }
+            });
+
+            // If no error, email exists
+            return !error;
+        } catch (error) {
+            // If there's an error, likely email doesn't exist
+            return false;
+        }
+    };
+
     const handleSignup = async () => {
         setLoading(true);
         try {
@@ -117,6 +136,17 @@ export default function Signup({ navigation }: SignupScreenProps) {
                 return;
             }
 
+            // ✅ Check if email exists using the new method
+            const emailExists = await checkEmailExists(email);
+            if (emailExists) {
+                setAlertTitle('Email Already Registered');
+                setAlertMessage('This email is already registered. Please sign in instead.');
+                setAlertVisible(true);
+                setLoading(false);
+                return;
+            }
+
+            // ✅ Proceed to sign up new user
             const { data: { user }, error: authError } = await supabase.auth.signUp({
                 email,
                 password,
@@ -128,9 +158,27 @@ export default function Signup({ navigation }: SignupScreenProps) {
             });
 
             if (authError) {
+                // Normalize the error message (in lowercase for easy matching)
+                const errorMessage = authError.message.toLowerCase();
+
+                // ✅ Handle if email already exists (covers all common Supabase messages)
+                if (
+                    errorMessage.includes('already registered') ||
+                    errorMessage.includes('already exists') ||
+                    errorMessage.includes('duplicate key value')
+                ) {
+                    setAlertTitle('Email Already Registered');
+                    setAlertMessage('This email is already registered. Please sign in instead.');
+                    setAlertVisible(true);
+                    setLoading(false);
+                    return;
+                }
+
+                // Other errors fallback
                 throw new Error(authError.message || 'Authentication failed');
             }
 
+            // ✅ Create profile (if not existing)
             const { data: existingProfile, error: fetchProfileError } = await supabase
                 .from('profiles')
                 .select('id')
@@ -149,6 +197,7 @@ export default function Signup({ navigation }: SignupScreenProps) {
             setTimeout(() => {
                 setAlertVisible(false);
             }, 8000);
+
             navigation.navigate('Login');
         } catch (error: any) {
             console.error('Signup error:', error);
@@ -168,6 +217,7 @@ export default function Signup({ navigation }: SignupScreenProps) {
             setLoading(false);
         }
     };
+
     const passwordRequirements = getPasswordRequirements(password);
 
     return (

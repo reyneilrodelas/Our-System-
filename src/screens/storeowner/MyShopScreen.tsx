@@ -82,7 +82,7 @@ const MyShopScreen = () => {
                     onPress={handleGoBack}
                     activeOpacity={0.7}
                 >
-                    <Ionicons name="arrow-back" size={24} color="#4f46e5" />
+                    <Ionicons name="arrow-back" size={28} color="#000000ff" />
                 </TouchableOpacity>
 
                 <Animated.View
@@ -184,7 +184,6 @@ const styles = StyleSheet.create({
         zIndex: 10,
         padding: 8,
         borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.7)',
     },
     header: {
         alignItems: 'center',

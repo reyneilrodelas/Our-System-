@@ -6,10 +6,10 @@ import {
     TouchableWithoutFeedback,
     Image,
     TouchableOpacity,
-    ActivityIndicator
+    ActivityIndicator,
+    Modal
 } from 'react-native';
 import { StyledAlert } from './StyledAlert';
-import { Picker } from '@react-native-picker/picker';
 import MapView, { Marker, Circle, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,6 +59,15 @@ const MapScreen = () => {
     const [alertVisible, setAlertVisible] = useState(false);
     const [alertTitle, setAlertTitle] = useState('');
     const [alertMessage, setAlertMessage] = useState('');
+    const [pickerVisible, setPickerVisible] = useState(false);
+
+    // Distance options
+    const distances = [
+        { label: '1 km', value: 1, icon: '📍', description: 'Very close' },
+        { label: '3 km', value: 3, icon: '🗺️', description: 'Nearby area' },
+        { label: '5 km', value: 5, icon: '🌍', description: 'Wider range' },
+        { label: '10 km', value: 10, icon: '🌎', description: 'Extended area' },
+    ];
 
     // Normalize store data
     const normalizedStores = (params?.storeData || [])
@@ -193,16 +202,22 @@ const MapScreen = () => {
                     <Ionicons name="arrow-back" size={24} color="#000" />
                 </TouchableOpacity>
 
-                <Picker
-                    selectedValue={selectedDistance}
-                    style={styles.picker}
-                    onValueChange={(itemValue) => setSelectedDistance(itemValue)}
+                {/* Custom Distance Picker Button */}
+                <TouchableOpacity
+                    style={styles.customPickerButton}
+                    onPress={() => setPickerVisible(true)}
+                    activeOpacity={0.8}
                 >
-                    <Picker.Item label="1 km" value={1} />
-                    <Picker.Item label="3 km" value={3} />
-                    <Picker.Item label="5 km" value={5} />
-                    <Picker.Item label="10 km" value={10} />
-                </Picker>
+                    <View style={styles.pickerButtonContent}>
+                        <Text style={styles.pickerIcon}>
+                            {distances.find(d => d.value === selectedDistance)?.icon}
+                        </Text>
+                        <Text style={styles.pickerText}>
+                            {distances.find(d => d.value === selectedDistance)?.label}
+                        </Text>
+                    </View>
+                    <Ionicons name="chevron-down" size={16} color="#fff" />
+                </TouchableOpacity>
 
                 <View style={styles.mapTypeContainer}>
                     <TouchableOpacity onPress={() => setMapType('standard')}>
@@ -232,6 +247,76 @@ const MapScreen = () => {
                     {filteredStores.length} {filteredStores.length === 1 ? 'store' : 'stores'}
                 </Text>
             </View>
+
+            {/* Distance Picker Modal */}
+            <Modal
+                visible={pickerVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setPickerVisible(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setPickerVisible(false)}
+                >
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select Distance Range</Text>
+                            <Text style={styles.modalSubtitle}>Choose your search radius</Text>
+                        </View>
+
+                        <View style={styles.optionsContainer}>
+                            {distances.map((item, index) => {
+                                const isSelected = selectedDistance === item.value;
+                                return (
+                                    <TouchableOpacity
+                                        key={item.value}
+                                        style={[
+                                            styles.modalItem,
+                                            isSelected && styles.modalItemSelected,
+                                            index === distances.length - 1 && { marginBottom: 0 }
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedDistance(item.value);
+                                            setPickerVisible(false);
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <View style={styles.itemLeft}>
+                                            <View style={[
+                                                styles.iconContainer,
+                                                isSelected && styles.iconContainerSelected
+                                            ]}>
+                                                <Text style={styles.modalItemIcon}>{item.icon}</Text>
+                                            </View>
+                                            <View style={styles.itemTextContainer}>
+                                                <Text style={[
+                                                    styles.modalItemText,
+                                                    isSelected && styles.modalItemTextSelected
+                                                ]}>
+                                                    {item.label}
+                                                </Text>
+                                                <Text style={styles.itemDescription}>{item.description}</Text>
+                                            </View>
+                                        </View>
+                                        {isSelected && (
+                                            <Ionicons name="checkmark-circle" size={28} color="#007AFF" />
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+
+                        <TouchableOpacity
+                            style={styles.closeButton}
+                            onPress={() => setPickerVisible(false)}
+                        >
+                            <Text style={styles.closeButtonText}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
 
             <TouchableWithoutFeedback onPress={handleMapPress}>
                 <MapView
@@ -364,17 +449,140 @@ const styles = StyleSheet.create({
         padding: 5,
         marginLeft: 10,
     },
-    picker: {
+    // Custom Picker Button Styles
+    customPickerButton: {
         height: 50,
         width: '30%',
-        backgroundColor: '#877f7f',
-        color: '#FFFFFF',
-        paddingHorizontal: 10,
-        fontSize: 14,
-        fontWeight: 'bold',
+        backgroundColor: '#a5a5a5ff',
+        borderRadius: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 12,
         marginLeft: 10,
         marginRight: 10,
+        shadowColor: '#007AFF',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
     },
+    pickerButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    pickerIcon: {
+        fontSize: 20,
+        marginRight: 8,
+    },
+    pickerText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: 'bold',
+    },
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    modalContent: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        padding: 24,
+        width: '85%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        elevation: 10,
+    },
+    modalHeader: {
+        marginBottom: 24,
+        alignItems: 'center',
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#1a1a1a',
+        marginBottom: 6,
+    },
+    modalSubtitle: {
+        fontSize: 13,
+        color: '#666',
+    },
+    optionsContainer: {
+        marginBottom: 20,
+    },
+    modalItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 14,
+        borderRadius: 12,
+        marginBottom: 10,
+        backgroundColor: '#f8f9fa',
+        borderWidth: 2,
+        borderColor: 'transparent',
+    },
+    modalItemSelected: {
+        backgroundColor: '#e3f2fd',
+        borderColor: '#007AFF',
+    },
+    itemLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    iconContainer: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#fff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+        borderWidth: 2,
+        borderColor: '#e0e0e0',
+    },
+    iconContainerSelected: {
+        backgroundColor: '#007AFF',
+        borderColor: '#007AFF',
+    },
+    modalItemIcon: {
+        fontSize: 22,
+    },
+    itemTextContainer: {
+        flex: 1,
+    },
+    modalItemText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 2,
+    },
+    modalItemTextSelected: {
+        color: '#007AFF',
+        fontWeight: 'bold',
+    },
+    itemDescription: {
+        fontSize: 12,
+        color: '#888',
+    },
+    closeButton: {
+        backgroundColor: '#f0f0f0',
+        padding: 14,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    closeButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#333',
+    },
+    // Map Type Container
     mapTypeContainer: {
         flexDirection: 'row',
         justifyContent: 'space-around',
@@ -409,28 +617,10 @@ const styles = StyleSheet.create({
         color: '#007AFF',
         marginTop: 5,
     },
-    storeDetails: {
-        backgroundColor: '#e3e1efec',
-        padding: 20,
-        marginTop: 10,
-        borderRadius: 10,
-        margin: 10,
-    },
-    storeDetailTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginBottom: 10,
-    },
-    storeDetailText: {
-        fontSize: 18,
-        marginBottom: 5,
-        fontWeight: 'bold',
-    },
     customMarker: {
-            // Adjust these values based on your marker image
-            width: 30,        // Width of your marker image
-            height: 40,       // Height of your marker image
-            marginBottom: 40,
+        width: 30,
+        height: 40,
+        marginBottom: 40,
     },
     storeDetailsContainer: {
         backgroundColor: '#fff',

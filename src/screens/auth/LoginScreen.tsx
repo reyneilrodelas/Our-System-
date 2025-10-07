@@ -43,10 +43,23 @@ export default function LoginScreen({ navigation }: Props) {
     const [styledAlertMessage, setStyledAlertMessage] = useState('');
     const [styledAlertOnOk, setStyledAlertOnOk] = useState<(() => void) | null>(null);
 
+    // Navigation guard to prevent multiple navigations
+    const isNavigating = useRef(false);
+    const navigationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
     // Animation refs
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
     const scaleAnim = useRef(new Animated.Value(0.95)).current;
+
+    useEffect(() => {
+        // Cleanup function to clear timeouts
+        return () => {
+            if (navigationTimeoutRef.current) {
+                clearTimeout(navigationTimeoutRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         // Entrance animation
@@ -96,7 +109,7 @@ export default function LoginScreen({ navigation }: Props) {
         const subscription = Linking.addEventListener('url', handleDeepLink);
         const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             console.log('Auth state changed:', event, session?.user?.id);
-            if (session) {
+            if (session && event === 'SIGNED_IN') {
                 await handlePostLoginNavigation(session.user);
             }
         });
@@ -113,6 +126,9 @@ export default function LoginScreen({ navigation }: Props) {
         return () => {
             authSubscription.unsubscribe();
             subscription.remove();
+            if (navigationTimeoutRef.current) {
+                clearTimeout(navigationTimeoutRef.current);
+            }
         };
     }, [navigation, fadeAnim, slideAnim, scaleAnim]);
 
@@ -180,32 +196,48 @@ export default function LoginScreen({ navigation }: Props) {
     };
 
     const handlePostLoginNavigation = async (user: any) => {
+        // Prevent multiple navigation attempts
+        if (isNavigating.current) {
+            console.log('Navigation already in progress, skipping...');
+            return;
+        }
+
         try {
+            isNavigating.current = true;
+
             const { data: { user: currentUser }, error } = await supabase.auth.getUser();
             if (error) throw error;
 
             const isAdmin = await verifyAdmin();
 
+            // Show success message
             showStyledAlert(
                 "Welcome Back! 🎉",
                 "You've successfully logged in to your account.",
-                () => setStyledAlertVisible(false)
+                () => {
+                    setStyledAlertVisible(false);
+                    // Navigate after alert is dismissed
+                    navigationTimeoutRef.current = setTimeout(() => {
+                        if (!isNavigating.current) return;
+                        navigation.replace('Main');
+                        isNavigating.current = false;
+                    }, 100);
+                }
             );
 
-            // Keep success alert visible longer
-            setTimeout(() => {
-                setStyledAlertVisible(false);
-            }, 4000);
-
+            // Show admin message if applicable (after navigation)
             if (isAdmin) {
-                setTimeout(() => showStyledAlert(
-                    'Admin Access Granted 👑',
-                    'You can access admin features from your profile.',
-                    () => setStyledAlertVisible(false)
-                ), 2000);
+                navigationTimeoutRef.current = setTimeout(() => {
+                    showStyledAlert(
+                        'Admin Access Granted 👑',
+                        'You can access admin features from your profile.',
+                        () => setStyledAlertVisible(false)
+                    );
+                }, 3000);
             }
         } catch (error) {
             console.error('Navigation error:', error);
+            isNavigating.current = false;
             showStyledAlert('Authentication Error', 'Failed to authenticate user');
         }
     };
@@ -213,6 +245,12 @@ export default function LoginScreen({ navigation }: Props) {
     const handleLogin = async () => {
         if (!email || !password) {
             showStyledAlert('Missing Information', 'Please fill in both email and password');
+            return;
+        }
+
+        // Prevent multiple login attempts
+        if (isNavigating.current) {
+            console.log('Login already in progress, skipping...');
             return;
         }
 
@@ -251,6 +289,7 @@ export default function LoginScreen({ navigation }: Props) {
                             }
                         );
                         setLoginLoading(false);
+                        isNavigating.current = false;
                         return;
                     } else if (error.message.includes('Invalid login credentials')) {
                         errorMessage = 'Invalid email or password. Please check your credentials and try again.';
@@ -281,6 +320,7 @@ export default function LoginScreen({ navigation }: Props) {
                         }
                     );
                     setLoginLoading(false);
+                    isNavigating.current = false;
                     return;
                 }
 
@@ -288,10 +328,11 @@ export default function LoginScreen({ navigation }: Props) {
                 throw new Error(errorMessage);
             }
 
-            const { data: { user } } = await supabase.auth.getUser();
-            await handlePostLoginNavigation(user);
+            // Navigation will be handled by the auth state change listener or handlePostLoginNavigation
+            console.log('Login successful, waiting for navigation...');
 
         } catch (error: any) {
+            isNavigating.current = false;
             // Only show error if we haven't already shown a specific one above
             if (!error.message?.includes('Email not confirmed') && !error.message?.includes('email_not_confirmed')) {
                 showStyledAlert(
@@ -304,6 +345,7 @@ export default function LoginScreen({ navigation }: Props) {
             setLoginLoading(false);
         }
     };
+
     const showStyledAlert = (title: string, message: string, onOk?: () => void) => {
         setStyledAlertTitle(title);
         setStyledAlertMessage(message);
@@ -401,6 +443,15 @@ export default function LoginScreen({ navigation }: Props) {
                             </View>
                         </View>
 
+                        {/* Forgot Password */}
+                        <TouchableOpacity
+                            style={styles.forgotContainer}
+                            onPress={handlePasswordReset}
+                            disabled={loginLoading || googleLoading}
+                        >
+                            <Text style={styles.forgotText}>Forgot Password?</Text>
+                        </TouchableOpacity>
+
                         {/* Login Button */}
                         <TouchableOpacity
                             style={[styles.loginButton, loginLoading && styles.loginButtonDisabled]}
@@ -447,6 +498,7 @@ export default function LoginScreen({ navigation }: Props) {
     );
 }
 
+// ... keep your existing styles the same ...
 const styles = StyleSheet.create({
     scrollContainer: {
         flexGrow: 1,

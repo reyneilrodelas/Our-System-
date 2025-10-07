@@ -1,27 +1,18 @@
 export default {
   expo: {
-    name: "Scanner",
+    name: "ScanWizard",
     slug: "capstoneproject",
-    scheme: "com.scanner",
+    scheme: "com.scanwizard",
     platforms: ["ios", "android", "web"],
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./src/assets/images/icon.png",
+    icon: "./src/assets/images/Untitled-1.png",
     userInterfaceStyle: "light",
     newArchEnabled: true,
-    splash: {
-      image: "./src/assets/images/splash-icon.png",
-      resizeMode: "contain",
-      backgroundColor: "#ffffff"
-    },
     ios: {
       supportsTablet: true
     },
     android: {
-      adaptiveIcon: {
-        foregroundImage: "./src/assets/images/adaptive-icon.png",
-        backgroundColor: "#ffffff"
-      },
       config: {
         googleMaps: {
           apiKey: process.env.GOOGLE_MAPS_API_KEY
@@ -34,9 +25,6 @@ export default {
         "android.permission.RECORD_AUDIO"
       ],
       package: "com.anonymous.Scanner"
-    },
-    web: {
-      favicon: "./src/assets/images/favicon.png"
     },
     plugins: [
       [

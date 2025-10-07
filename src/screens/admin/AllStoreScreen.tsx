@@ -602,7 +602,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: 20,
+        padding: 30,
         backgroundColor: '#4A90E2',
         elevation: 4,
         shadowColor: '#000',
@@ -612,11 +612,13 @@ const styles = StyleSheet.create({
     },
     backButton: {
         padding: 5,
+        marginTop: 10,
     },
     headerTitle: {
-        fontSize: 20,
+        fontSize: 25,
         fontWeight: 'bold',
         color: '#fff',
+        marginTop: 10,
     },
     filterContainer: {
         flexDirection: 'row',

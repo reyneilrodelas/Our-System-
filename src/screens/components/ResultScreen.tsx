@@ -39,6 +39,7 @@ interface StoreProduct {
     stock: number | null;
     availability: boolean;
     stores: Store[];
+    distance?: number; // Add distance property
 }
 
 interface ProductData {
@@ -93,14 +94,35 @@ export default function ResultScreen({ route }: any) {
         }).start();
     }, [productData]);
 
+    const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371; // Earth radius in km
+        const dLat = (lat2 - lat1) * (Math.PI / 180);
+        const dLon = (lon2 - lon1) * (Math.PI / 180);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * (Math.PI / 180)) *
+            Math.cos(lat2 * (Math.PI / 180)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c; // Distance in km
+    };
+
     const fetchData = async () => {
         try {
             setRefreshing(true);
             setLoading(true);
 
-            // Only fetch location if it's not cached
-            if (!userLocation) {
+            // Fetch location first to ensure we have it for sorting
+            let currentLocation = userLocation;
+            if (!currentLocation) {
                 await getLocation();
+                // Get the updated location from state after getLocation completes
+                const location = await Location.getCurrentPositionAsync({});
+                currentLocation = {
+                    latitude: location.coords.latitude,
+                    longitude: location.coords.longitude,
+                };
+                setUserLocation(currentLocation);
             }
 
             // Fetch stores with the product
@@ -136,17 +158,35 @@ export default function ResultScreen({ route }: any) {
                         store.longitude &&
                         store.status === 'approved'
                     );
+
+                    // Calculate distance for sorting
+                    let distance = Infinity;
+                    if (currentLocation && validStores.length > 0 && validStores[0]) {
+                        distance = getDistance(
+                            currentLocation.latitude,
+                            currentLocation.longitude,
+                            validStores[0].latitude,
+                            validStores[0].longitude
+                        );
+                    }
+
                     return {
                         product_barcode: item.product_barcode,
                         price: item.price,
                         stock: item.stock,
                         availability: item.availability !== undefined ? item.availability : (item.stock !== null && item.stock > 0),
-                        stores: validStores
+                        stores: validStores,
+                        distance: distance
                     };
                 })
                 .filter(item => item.stores.length > 0);
 
-            setStoreData(validatedData);
+            // Sort by distance (nearest first)
+            const sortedData = validatedData.sort((a, b) => {
+                return (a.distance || Infinity) - (b.distance || Infinity);
+            });
+
+            setStoreData(sortedData);
 
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -157,19 +197,6 @@ export default function ResultScreen({ route }: any) {
             setLoading(false);
             setRefreshing(false);
         }
-    };
-
-    const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-        const R = 6371; // Earth radius in km
-        const dLat = (lat2 - lat1) * (Math.PI / 180);
-        const dLon = (lon2 - lon1) * (Math.PI / 180);
-        const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * (Math.PI / 180)) *
-            Math.cos(lat2 * (Math.PI / 180)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c; // Distance in km
     };
 
     const handleNavigateToMap = () => {
@@ -200,7 +227,7 @@ export default function ResultScreen({ route }: any) {
 
         const store = item.stores[0];
         const storeName = store.name || 'Unknown Store';
-        const price = item.price ? `₱${item.price.toFixed(2)}` : 'Price not available';
+        const price = item.price ? `₱${item.price.toFixed(2)}` : 'Price not available' ;
         const address = store.address || 'Address not available';
         const isAvailable = item.availability;
 
@@ -259,7 +286,14 @@ export default function ResultScreen({ route }: any) {
                             <MaterialIcons name="directions-walk" size={14} color="#6366F1" />
                             <Text style={styles.distanceText}>{distance}</Text>
                         </View>
-                        <Text style={styles.priceText}>{price}</Text>
+                        <Text
+                            style={[
+                                styles.priceText,
+                                !item.price && { color: '#EF4444' } // red if price is missing
+                            ]}
+                        >
+                            {item.price ? `₱${item.price.toFixed(2)}` : 'Price not available'}
+                        </Text>
                     </View>
 
                     <View style={[
@@ -326,15 +360,17 @@ export default function ResultScreen({ route }: any) {
                         <Text style={styles.productName} numberOfLines={2}>
                             {productData.name || 'Product'}
                         </Text>
-                        <View style={styles.barcodeRow}>
-                            <MaterialIcons name="qr-code" size={14} color="#6366F1" />
-                            <Text style={styles.productBarcode}>{productData.barcode}</Text>
-                        </View>
+
                         {productData.description && (
                             <Text style={styles.productDescription} numberOfLines={2}>
                                 {productData.description}
                             </Text>
                         )}
+
+                        <View style={styles.barcodeRow}>
+                            <MaterialIcons name="qr-code" size={13} color="#6366F1" />
+                            <Text style={styles.productBarcode}>{productData.barcode}</Text>
+                        </View>
                     </View>
                 </View>
             </Animated.View>
@@ -419,7 +455,6 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: 'rgba(255, 255, 255, 0.2)',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -428,12 +463,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     headerTitle: {
-        fontSize: 20,
+        fontSize: 25,
         fontWeight: '700',
         color: '#FFF',
+        textAlign: 'center',
     },
     headerSubtitle: {
-        fontSize: 13,
+        fontSize: 15,
         color: 'rgba(255, 255, 255, 0.8)',
         marginTop: 2,
     },
@@ -532,13 +568,14 @@ const styles = StyleSheet.create({
     productBarcode: {
         fontSize: 12,
         color: '#4B5563',
-        fontWeight: '600',
         marginLeft: 4,
+        paddingTop: 2,
         fontFamily: 'monospace',
     },
     productDescription: {
         fontSize: 14,
-        color: '#6B7280',
+        fontWeight: '500',
+        color: '#02270dff',
         lineHeight: 18,
     },
     resultsSection: {
@@ -671,8 +708,8 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     priceText: {
-        fontSize: 14, // Reduced from 16 to 14
-        fontWeight: '600', // Slightly reduced weight
+        fontSize: 14,
+        fontWeight: '600',
         color: '#059669',
     },
     availabilityBadge: {

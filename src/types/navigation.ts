@@ -15,6 +15,9 @@ export type RootStackParamList = {
     AdminSetup: undefined;
     EditProfile?: { onGoBack?: () => void }; // Allow optional onGoBack callback
     StoreProductDetailsScreen: undefined;
+    AboutUs: undefined;
+    ContactUs: undefined;
+    ProfileMain: undefined;
 
 } & StoreOwnerStackParamList & AdminStackParamList;
 
@@ -31,6 +34,9 @@ export type HomeStackParamList = {
     CreateStore: undefined;
     StoreDetails: { storeId: string };
     StoreProductDetailsScreen: { storeId: string };
+    ProfileMain: undefined;
+    AboutUs: undefined;
+    ContactUs: undefined;
 };
 
 export type TabParamList = {

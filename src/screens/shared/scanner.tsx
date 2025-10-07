@@ -53,24 +53,30 @@ export default function App() {
     const [alertMessage, setAlertMessage] = useState('');
     const [cameraKey, setCameraKey] = useState(0);
     const [cameraActive, setCameraActive] = useState(true);
+    const [previousTorchState, setPreviousTorchState] = useState(false); // Track previous torch state
 
     // Function to specifically turn off the torch
     const turnOffTorch = () => {
         setTorchEnabled(false);
     };
 
-    // Reset function
-    const resetScanner = () => {
+    // Reset function - preserve torch state
+    const resetScanner = (preserveTorch: boolean = false) => {
         setIsScanning(true); // Keep scanning active
         setScanStatus('Scanning...');
-        setFacing('back');
-        setTorchEnabled(false);
+
+        // Only reset torch if not preserving it
+        if (!preserveTorch) {
+            setTorchEnabled(false);
+        }
+
         setHasSuccessfulScan(false);
+        setCameraActive(true); // Ensure camera is active
+
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
-        setCameraActive(true); // Ensure camera is active
         startScanTimeout(); // Start the scan timeout immediately
     };
 
@@ -111,62 +117,100 @@ export default function App() {
     // Start timeout for scanning
     const startScanTimeout = () => {
         timeoutRef.current = setTimeout(() => {
+            // Store current torch state before timeout
+            setPreviousTorchState(torchEnabled);
+
             setIsScanning(false);
             setScanStatus('No barcode found - Tap to retry');
             setAlertTitle('Scan Failed');
             setAlertMessage('No barcode detected. Would you like to try again?');
             setAlertVisible(true);
+            // Keep camera active for retry
+            setCameraActive(true);
         }, SCAN_TIMEOUT);
     };
 
     const handleRetry = () => {
         setAlertVisible(false);
-        setIsScanning(true);
-        setScanStatus('Scanning...');
-        startScanTimeout();
+        // Reset scanner but preserve the previous torch state
+        resetScanner(previousTorchState);
+        // Restore torch state from before timeout
+        setTorchEnabled(previousTorchState);
+        // Force camera refresh
+        setCameraKey(prevKey => prevKey + 1);
     };
 
     const handleBarcodeScanned = async (result: BarcodeScanningResult) => {
-        if (!isScanning || !result?.data) return;  // Check if result or result.data is undefined
+        if (!isScanning || !result?.data || !cameraActive) return;
 
         // Immediately stop scanning to prevent multiple scans
         setIsScanning(false);
-        setCameraActive(false);
 
+        // Clear the timeout
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
 
+        // Check if barcode type is supported
         if (!SUPPORTED_BARCODE_TYPES.includes(result.type as BarcodeType)) {
             setScanStatus('Unsupported barcode');
             setAlertTitle('Unsupported Barcode');
             setAlertMessage(`Type: ${result.type}`);
             setAlertVisible(true);
-            setScanStatus('Press Icon to Scan');
+            // Keep camera active for retry - preserve torch state
+            setCameraActive(true);
             return;
         }
 
-        setScanStatus('Barcode scanned');
-        setHasSuccessfulScan(true); // Set successful scan flag
+        // Update status but keep camera active for error cases
+        setScanStatus('Barcode scanned - Processing...');
+        setHasSuccessfulScan(true);
 
-        const { data, error } = await supabase
-            .from('products')
-            .select('*')
-            .eq('barcode', result.data)
-            .single();
+        // Store current torch state before processing
+        const currentTorchState = torchEnabled;
 
-        if (error) {
+        // Turn off torch if it's on during processing
+        if (torchEnabled) {
+            setTorchEnabled(false);
+        }
+
+        try {
+            const { data, error } = await supabase
+                .from('products')
+                .select('*')
+                .eq('barcode', result.data)
+                .single();
+
+            if (error) {
+                // Product not found - keep camera active for retry and restore torch
+                setAlertTitle('Product Not Found');
+                setAlertMessage('This product is not in our database. Would you like to try again?');
+                setAlertVisible(true);
+                console.error('Supabase error:', error);
+                setHasSuccessfulScan(false);
+                setScanStatus('Product not found');
+                setCameraActive(true); // Keep camera active
+                // Restore torch state
+                setTorchEnabled(currentTorchState);
+                return;
+            }
+
+            // Product found, navigate to results
+            // Only deactivate camera when successfully navigating away
+            setCameraActive(false);
+            navigation.navigate('ResultScreen', { productData: data });
+        } catch (err) {
+            console.error('Unexpected error:', err);
             setAlertTitle('Error');
-            setAlertMessage('Product not found. Would you like to try again?');
+            setAlertMessage('An unexpected error occurred. Please try again.');
             setAlertVisible(true);
-            console.error('Supabase error:', error);
-            setCameraActive(true); // Re-enable camera for retry
-            return;
+            setHasSuccessfulScan(false);
+            setScanStatus('Error occurred');
+            setCameraActive(true); // Keep camera active for retry
+            // Restore torch state
+            setTorchEnabled(currentTorchState);
         }
-
-        // Product found, navigate to results
-        navigation.navigate('ResultScreen', { productData: data });
     };
 
     const toggleCameraFacing = () => {
@@ -196,7 +240,7 @@ export default function App() {
 
     return (
         <View style={styles.container}>
-            {cameraActive && (
+            {cameraActive ? (
                 <CameraView
                     key={`camera-${cameraKey}`} // This is the key used to reset the camera
                     style={styles.camera}
@@ -218,7 +262,7 @@ export default function App() {
                     <CameraOverlay
                         scanStatus={scanStatus}
                         isScanning={isScanning}
-                        onScanPress={() => {}} // Empty function since we don't need it
+                        onScanPress={() => { }} // Empty function since we don't need it
                         onTorchPress={toggleTorch}
                         onFlipPress={toggleCameraFacing}
                         torchEnabled={torchEnabled}
@@ -226,6 +270,11 @@ export default function App() {
                         hasSuccessfulScan={hasSuccessfulScan}
                     />
                 </CameraView>
+            ) : (
+                // Show a loading or placeholder when camera is inactive
+                <View style={styles.cameraPlaceholder}>
+                    <Text style={styles.placeholderText}>Camera inactive</Text>
+                </View>
             )}
 
             <StyledAlert
@@ -248,6 +297,17 @@ const styles = StyleSheet.create({
     },
     camera: {
         flex: 1,
+    },
+    cameraPlaceholder: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    placeholderText: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
     backButton: {
         position: 'absolute',

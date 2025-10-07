@@ -379,10 +379,18 @@ export default function AddStoreScreen() {
                 colors={['#6c5ce7', '#0984e3']}
                 style={styles.headerGradient}
             >
-                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-                    <Ionicons name="arrow-back" size={24} color="white" />
-                </TouchableOpacity>
-                <Text style={styles.title}>Create New Store</Text>
+                <View style={styles.headerContent}>
+                    <TouchableOpacity
+                        style={styles.backButton}
+                        onPress={() => navigation.goBack()}
+                    >
+                        <Ionicons name="arrow-back" size={28} color="white" />
+                    </TouchableOpacity>
+                    <View style={styles.titleContainer}>
+                        <Text style={styles.title}>Create New Store</Text>
+                    </View>
+                    <View style={styles.headerRight} />
+                </View>
             </LinearGradient>
 
             <ScrollView
@@ -532,6 +540,24 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 20,
         elevation: 10,
+    },
+    headerContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    backButton: {
+        padding: 10,
+        borderRadius: 20,
+        zIndex: 10,
+    },
+    titleContainer: {
+        flex: 1,
+        alignItems: 'center',
+        marginHorizontal: 10,
+    },
+    headerRight: {
+        width: 48,
     },
     title: {
         fontSize: 24,
@@ -693,15 +719,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
         flex: 1,
     },
-    backButton: {
-        padding: 10,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        position: 'absolute',
-        left: 10,
-        top: 1,
-        zIndex: 10,
-    },
     accuracyText: {
         fontSize: 12,
         color: '#636e72',
@@ -733,18 +750,5 @@ const styles = StyleSheet.create({
         marginTop: 10,
         color: '#6c5ce7',
         fontSize: 16,
-    },
-    headerContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    titleContainer: {
-        flex: 1,
-        alignItems: 'center',
-        marginHorizontal: 10,
-    },
-    headerRight: {
-        width: 48,
     },
 });

@@ -8,7 +8,10 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Modal,
-    FlatList
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    Keyboard
 } from 'react-native';
 import { StyledAlert } from '../../screens/components/StyledAlert';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
@@ -48,7 +51,12 @@ export default function AddProductScreen() {
     const [showScanner, setShowScanner] = useState(false);
     const [torchOn, setTorchOn] = useState(false);
     const [permission, requestPermission] = useCameraPermissions();
+    const [showConfirmation, setShowConfirmation] = useState(false);
+    const [pendingProduct, setPendingProduct] = useState<any>(null);
     const navigation = useNavigation();
+    const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+    const scrollViewRef = React.useRef<ScrollView>(null);
+    const descriptionInputRef = React.useRef<TextInput>(null);
 
     useEffect(() => {
         // Request camera permissions when component mounts
@@ -57,6 +65,25 @@ export default function AddProductScreen() {
                 await requestPermission();
             })();
         }
+
+        // Keyboard listeners
+        const keyboardDidShowListener = Keyboard.addListener(
+            'keyboardDidShow',
+            () => {
+                setKeyboardVisible(true);
+            }
+        );
+        const keyboardDidHideListener = Keyboard.addListener(
+            'keyboardDidHide',
+            () => {
+                setKeyboardVisible(false);
+            }
+        );
+
+        return () => {
+            keyboardDidHideListener.remove();
+            keyboardDidShowListener.remove();
+        };
     }, []);
 
     useEffect(() => {
@@ -66,7 +93,16 @@ export default function AddProductScreen() {
         }
     }, [showScanner]);
 
-    const showAlert = (title: string, message: string, callback?: () => void) => {
+    // Auto-scroll to description input when focused
+    const handleDescriptionFocus = () => {
+        if (scrollViewRef.current) {
+            setTimeout(() => {
+                scrollViewRef.current?.scrollToEnd({ animated: true });
+            }, 100);
+        }
+    };
+
+    const showAlert = (title: string, message: string, callback?: () => void, showCancel: boolean = false) => {
         setAlertTitle(title);
         setAlertMessage(message);
         setAlertCallback(() => callback);
@@ -84,6 +120,27 @@ export default function AddProductScreen() {
         setTorchOn(prev => !prev);
     };
 
+    const checkProductExists = async (barcode: string): Promise<boolean> => {
+        try {
+            const { data, error } = await supabase
+                .from('products')
+                .select('id, name')
+                .eq('barcode', barcode.trim())
+                .single();
+
+            if (error && error.code !== 'PGRST116') {
+                // PGRST116 is "not found" error, which is expected
+                console.error('Error checking product:', error);
+                return false;
+            }
+
+            return !!data; // Returns true if product exists, false otherwise
+        } catch (error) {
+            console.error('Error checking product existence:', error);
+            return false;
+        }
+    };
+
     const handleAddProduct = async () => {
         // Validate inputs
         if (!productName || !productBarcode || !productDescription || !productCategory) {
@@ -96,12 +153,46 @@ export default function AddProductScreen() {
         setMessageType(null);
 
         try {
-            const { error } = await supabase.from('products').insert([{
+            // Check if product already exists
+            const productExists = await checkProductExists(productBarcode);
+
+            if (productExists) {
+                showAlert(
+                    'Product Already Exists',
+                    'A product with this barcode already exists in the database. Please use a different barcode or update the existing product.',
+                    undefined,
+                    false
+                );
+                return;
+            }
+
+            // Store the product data for confirmation
+            const productData = {
                 name: productName.trim(),
                 barcode: productBarcode.trim(),
                 description: productDescription.trim(),
                 category: productCategory,
-            }]);
+            };
+
+            setPendingProduct(productData);
+            setShowConfirmation(true);
+
+        } catch (error) {
+            console.error('Error checking product:', error);
+            showAlert('Error', 'Failed to check product existence. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const confirmAddProduct = async () => {
+        if (!pendingProduct) return;
+
+        setIsLoading(true);
+        setShowConfirmation(false);
+
+        try {
+            const { error } = await supabase.from('products').insert([pendingProduct]);
 
             if (error) throw error;
 
@@ -111,6 +202,7 @@ export default function AddProductScreen() {
                 setProductBarcode('');
                 setProductDescription('');
                 setProductCategory('');
+                setPendingProduct(null);
             });
 
         } catch (error) {
@@ -118,7 +210,13 @@ export default function AddProductScreen() {
             showAlert('Error', error instanceof Error ? error.message : 'Failed to add product');
         } finally {
             setIsLoading(false);
+            setPendingProduct(null);
         }
+    };
+
+    const cancelAddProduct = () => {
+        setShowConfirmation(false);
+        setPendingProduct(null);
     };
 
     const renderCategoryItem = ({ item }: { item: string }) => (
@@ -196,7 +294,11 @@ export default function AddProductScreen() {
     }
 
     return (
-        <View style={styles.container}>
+        <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
             <StyledAlert
                 visible={alertVisible}
                 title={alertTitle}
@@ -208,6 +310,59 @@ export default function AddProductScreen() {
                 onClose={() => setAlertVisible(false)}
                 showCancel={false}
             />
+
+            {/* Confirmation Modal */}
+            <Modal
+                visible={showConfirmation}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={cancelAddProduct}
+            >
+                <View style={styles.confirmationModalContainer}>
+                    <View style={styles.confirmationModalContent}>
+                        <View style={styles.confirmationHeader}>
+                            <Ionicons name="warning" size={40} color="#f39c12" />
+                            <Text style={styles.confirmationTitle}>Confirm Add Product</Text>
+                        </View>
+
+                        <Text style={styles.confirmationMessage}>
+                            Are you sure you want to add this product to the database?
+                        </Text>
+
+                        {pendingProduct && (
+                            <View style={styles.productPreview}>
+                                <Text style={styles.previewLabel}>Product Details:</Text>
+                                <Text style={styles.previewText}><Text style={styles.previewBold}>Name:</Text> {pendingProduct.name}</Text>
+                                <Text style={styles.previewText}><Text style={styles.previewBold}>Barcode:</Text> {pendingProduct.barcode}</Text>
+                                <Text style={styles.previewText}><Text style={styles.previewBold}>Category:</Text> {pendingProduct.category}</Text>
+                                <Text style={styles.previewText}><Text style={styles.previewBold}>Description:</Text> {pendingProduct.description}</Text>
+                            </View>
+                        )}
+
+                        <View style={styles.confirmationButtons}>
+                            <TouchableOpacity
+                                style={[styles.confirmationButton, styles.cancelButton]}
+                                onPress={cancelAddProduct}
+                                disabled={isLoading}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.confirmationButton, styles.confirmButton]}
+                                onPress={confirmAddProduct}
+                                disabled={isLoading}
+                            >
+                                {isLoading ? (
+                                    <ActivityIndicator color="#fff" size="small" />
+                                ) : (
+                                    <Text style={styles.confirmButtonText}>Add Product</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
             <LinearGradient
                 colors={['#6c5ce7', '#0984e3']}
                 style={styles.headerGradient}
@@ -219,7 +374,15 @@ export default function AddProductScreen() {
                 <Text style={styles.headerSubtitle}>Fill in the product details</Text>
             </LinearGradient>
 
-            <ScrollView contentContainerStyle={styles.scrollContainer}>
+            <ScrollView
+                ref={scrollViewRef}
+                contentContainerStyle={[
+                    styles.scrollContainer,
+                    isKeyboardVisible && styles.scrollContainerKeyboardOpen
+                ]}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+            >
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Product Name *</Text>
                     <TextInput
@@ -228,6 +391,7 @@ export default function AddProductScreen() {
                         placeholderTextColor="#999"
                         value={productName}
                         onChangeText={setProductName}
+                        returnKeyType="next"
                     />
                 </View>
 
@@ -241,6 +405,7 @@ export default function AddProductScreen() {
                             value={productBarcode}
                             onChangeText={setProductBarcode}
                             keyboardType="numeric"
+                            returnKeyType="next"
                         />
                         <TouchableOpacity
                             style={styles.scanButton}
@@ -267,6 +432,7 @@ export default function AddProductScreen() {
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Description *</Text>
                     <TextInput
+                        ref={descriptionInputRef}
                         style={[styles.input, styles.descriptionInput]}
                         placeholder="Enter product description"
                         placeholderTextColor="#999"
@@ -274,6 +440,9 @@ export default function AddProductScreen() {
                         onChangeText={setProductDescription}
                         multiline
                         numberOfLines={4}
+                        textAlignVertical="top"
+                        onFocus={handleDescriptionFocus}
+                        returnKeyType="default"
                     />
                 </View>
 
@@ -310,6 +479,9 @@ export default function AddProductScreen() {
                         </>
                     )}
                 </TouchableOpacity>
+
+                {/* Add extra space when keyboard is open */}
+                {isKeyboardVisible && <View style={styles.keyboardSpacer} />}
             </ScrollView>
 
             <Modal
@@ -335,7 +507,7 @@ export default function AddProductScreen() {
                     </View>
                 </View>
             </Modal>
-        </View>
+        </KeyboardAvoidingView>
     );
 }
 
@@ -497,6 +669,7 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#fff',
         textAlign: 'center',
+        marginTop: 18,
     },
     headerSubtitle: {
         fontSize: 16,
@@ -507,6 +680,9 @@ const styles = StyleSheet.create({
     scrollContainer: {
         paddingHorizontal: 20,
         paddingBottom: 30,
+    },
+    scrollContainerKeyboardOpen: {
+        paddingBottom: 100, // Extra padding when keyboard is open
     },
     formGroup: {
         marginBottom: 20,
@@ -606,6 +782,7 @@ const styles = StyleSheet.create({
         top: 30,
         padding: 10,
         zIndex: 1,
+        marginTop: 15,
     },
     modalContainer: {
         flex: 1,
@@ -619,12 +796,6 @@ const styles = StyleSheet.create({
         padding: 20,
         width: '80%',
         maxHeight: '60%',
-    },
-    modalTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginBottom: 15,
-        textAlign: 'center',
     },
     categoryItem: {
         padding: 15,
@@ -644,5 +815,107 @@ const styles = StyleSheet.create({
     modalCloseText: {
         color: 'white',
         fontWeight: 'bold',
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 15,
+        textAlign: 'center',
+    },
+    // Confirmation Modal Styles
+    confirmationModalContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: 20,
+    },
+    confirmationModalContent: {
+        backgroundColor: 'white',
+        borderRadius: 15,
+        padding: 25,
+        width: '90%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 10,
+    },
+    confirmationHeader: {
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    confirmationTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#2d3436',
+        marginTop: 10,
+        textAlign: 'center',
+    },
+    confirmationMessage: {
+        fontSize: 16,
+        color: '#636e72',
+        textAlign: 'center',
+        marginBottom: 20,
+        lineHeight: 22,
+    },
+    productPreview: {
+        backgroundColor: '#f8f9fa',
+        borderRadius: 10,
+        padding: 15,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#e9ecef',
+    },
+    previewLabel: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#2d3436',
+        marginBottom: 10,
+    },
+    previewText: {
+        fontSize: 14,
+        color: '#636e72',
+        marginBottom: 5,
+        lineHeight: 18,
+    },
+    previewBold: {
+        fontWeight: '600',
+        color: '#2d3436',
+    },
+    confirmationButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 15,
+    },
+    confirmationButton: {
+        flex: 1,
+        padding: 15,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cancelButton: {
+        backgroundColor: '#e9ecef',
+        borderWidth: 1,
+        borderColor: '#dee2e6',
+    },
+    confirmButton: {
+        backgroundColor: '#6c5ce7',
+    },
+    cancelButtonText: {
+        color: '#495057',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    confirmButtonText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: '600',
+        textAlign: 'center',
+    },
+    keyboardSpacer: {
+        height: 50, // Extra space when keyboard is open
     },
 });

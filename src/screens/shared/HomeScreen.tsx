@@ -27,7 +27,7 @@ export default function HomeScreen() {
 
             <View style={styles.contentContainer}>
                 <Image
-                    source={require('../../assets/images/transparent.png')}
+                    source={require('../../assets/images/finallogo.png')}
                     style={styles.image}
                     resizeMode="contain"
                 />
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     },
     image: {
         marginTop: 10,
-        width: width * 0.8,
+        width: width * 0.6,
         height: width * 0.8,
         marginBottom: 10,
         shadowColor: '#6366F1',

@@ -32,6 +32,8 @@ import AllStoresScreen from './src/screens/admin/AllStoreScreen';
 import ManageProductScreen from './src/screens/storeowner/ManageProductScreen';
 import { View, TouchableOpacity } from 'react-native';
 import StoreProductDetailsScreen from './src/screens/components/StoreProductDetailsScreen';
+import AboutUsScreen from './src/screens/shared/AboutUsScreen';
+import ContactUsScreen from './src/screens/shared/ContactUsScreen';
 
 // Create navigators
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -70,13 +72,32 @@ function HomeStackScreen() {
   );
 }
 
-// Tab Navigator
+// Profile Stack - FIXED: Remove AboutUs and ContactUs from here
+function ProfileStackScreen() {
+  return (
+    <HomeStack.Navigator screenOptions={{ headerShown: false }}>
+      <HomeStack.Screen name="ProfileMain" component={ProfileScreen} />
+      {/* Remove AboutUs and ContactUs - they should only be in Root Stack */}
+    </HomeStack.Navigator>
+  );
+}
+
+// Tab Navigator - FIXED VERSION
 function TabNavigator() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => {
         const routeName = getFocusedRouteNameFromRoute(route) ?? '';
-        const hideOnScreens = ['Scanner', 'StoreOwner', 'ResultScreen', 'MapScreen', 'StoreProductDetailsScreen', 'StoreDetails'];
+        const hideOnScreens = [
+          'Scanner',
+          'StoreOwner',
+          'ResultScreen',
+          'MapScreen',
+          'StoreProductDetailsScreen',
+          'StoreDetails',
+          'AboutUs', // Hide tab bar for AboutUs
+          'ContactUs' // Hide tab bar for ContactUs
+        ];
 
         return {
           headerShown: false,
@@ -139,15 +160,8 @@ function TabNavigator() {
           tabBarButton: (props) => (
             <TouchableOpacity
               onPress={props.onPress}
-              style={[
-                props.style as object,
-                {
-                  flex: 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 8,
-                }
-              ]}
+              onLongPress={props.onLongPress ?? undefined}
+              style={props.style}
               activeOpacity={0.7}
             >
               {props.children}
@@ -172,7 +186,7 @@ function TabNavigator() {
       />
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileStackScreen}
         options={{
           tabBarLabel: 'Profile',
         }}
@@ -190,26 +204,28 @@ function RootNavigator() {
       initialRouteName="Startup"
       screenOptions={{ headerShown: false }}
     >
-      {!session ? (
-        <>
-          <RootStack.Screen name="Startup" component={StartupScreen} />
-          <RootStack.Screen name="Login" component={LoginScreen} />
-          <RootStack.Screen name="Signup" component={SignupScreen} />
-        </>
-      ) : (
-        <>
-          <RootStack.Screen name="Main" component={TabNavigator} />
-          <RootStack.Screen name="EditProfile" component={ProfileEditScreen} />
-          <RootStack.Screen name="StoreOwner" component={StoreOwnerStackScreen} />
-          <RootStack.Screen name="ResultScreen" component={ResultScreen} />
-          <RootStack.Screen name="MapScreen" component={MapScreen} />
-          <RootStack.Screen name="AdminDashboard" component={AdminDashboard} />
-          <RootStack.Screen name="Approvals" component={AdminApprovalScreen} />
-          <RootStack.Screen name="AdminSetup" component={AdminSetupScreen} />
-          <RootStack.Screen name="AllStores" component={AllStoresScreen} />
-          <RootStack.Screen name="StoreProductDetailsScreen" component={StoreProductDetailsScreen} />
-        </>
-      )}
+      {/* ALWAYS include Startup screen first */}
+      <RootStack.Screen name="Startup" component={StartupScreen} />
+
+      {/* Auth screens */}
+      <RootStack.Screen name="Login" component={LoginScreen} />
+      <RootStack.Screen name="Signup" component={SignupScreen} />
+
+      {/* Main app screens */}
+      <RootStack.Screen name="Main" component={TabNavigator} />
+      <RootStack.Screen name="EditProfile" component={ProfileEditScreen} />
+      <RootStack.Screen name="StoreOwner" component={StoreOwnerStackScreen} />
+      <RootStack.Screen name="ResultScreen" component={ResultScreen} />
+      <RootStack.Screen name="MapScreen" component={MapScreen} />
+      <RootStack.Screen name="AdminDashboard" component={AdminDashboard} />
+      <RootStack.Screen name="Approvals" component={AdminApprovalScreen} />
+      <RootStack.Screen name="AdminSetup" component={AdminSetupScreen} />
+      <RootStack.Screen name="AllStores" component={AllStoresScreen} />
+      <RootStack.Screen name="StoreProductDetailsScreen" component={StoreProductDetailsScreen} />
+
+      {/* AboutUs and ContactUs should ONLY be here (outside tabs) */}
+      <RootStack.Screen name="AboutUs" component={AboutUsScreen} />
+      <RootStack.Screen name="ContactUs" component={ContactUsScreen} />
     </RootStack.Navigator>
   );
 }

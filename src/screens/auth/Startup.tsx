@@ -5,65 +5,105 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../types/navigation';
 import { fontFamily } from '../../Styles/fontFamily';
+import { useAuth } from '../../context/AuthContext';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Startup'>;
 
+// Adjust these times to control how long the startup screen shows
+const MINIMUM_SCREEN_TIME = 1000; // Wait time before starting sequence
+const FADE_IN_DURATION = 800; // Fade in animation duration
+const DISPLAY_DURATION = 1500; // How long to show logo at full opacity
+const FADE_OUT_DURATION = 600; // Fade out animation duration
+// Total time: ~3.9 seconds (adjust individual values as needed)
+
 export default function Startup() {
     const navigation = useNavigation<NavigationProp>();
+    const { session } = useAuth(); // Get auth session
     const fadeAnim = useRef(new Animated.Value(0)).current;
-    const [imageLoaded, setImageLoaded] = useState(false);
-    const [loadError, setLoadError] = useState(false);
+    const [canNavigate, setCanNavigate] = useState(false);
+    const mountTime = useRef(Date.now()).current;
+    const hasNavigated = useRef(false); // Prevent multiple navigations
 
-    // Preload image and handle animation timing
     useEffect(() => {
-        let timer: NodeJS.Timeout | undefined = undefined;
+        console.log('Startup screen mounted');
+        console.log('Current session:', session);
 
-        // Try to preload the image
-        try {
-            const imageSource = Image.resolveAssetSource(
-                require('../../assets/images/transparent.png')
-            );
+        // Prevent navigation away from this screen
+        const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+            if (!hasNavigated.current) {
+                // Prevent navigation until animation completes
+                e.preventDefault();
+                console.log('Navigation blocked - animation in progress');
+            }
+        });
 
-            Image.prefetch(imageSource.uri).then(() => {
-                setImageLoaded(true);
-            }).catch(() => {
-                setLoadError(true);
-                setImageLoaded(true); // Continue with fallback UI
-            });
-        } catch (error) {
-            setLoadError(true);
-            setImageLoaded(true); // Continue with fallback UI
-        }
+        // Start fade in immediately
+        Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: FADE_IN_DURATION,
+            useNativeDriver: true,
+        }).start(() => {
+            console.log('Fade in complete');
+        });
+
+        // Force minimum display time
+        const minimumTimer = setTimeout(() => {
+            console.log('Minimum time elapsed');
+            setCanNavigate(true);
+        }, MINIMUM_SCREEN_TIME);
 
         return () => {
-            if (timer) clearTimeout(timer);
+            clearTimeout(minimumTimer);
+            unsubscribe();
         };
     }, []);
 
-    // Handle animations when image is loaded
     useEffect(() => {
-        if (imageLoaded) {
-            // Fade in animation
-            Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 1000,
-                useNativeDriver: true,
-            }).start();
+        if (canNavigate) {
+            console.log('Starting navigation sequence');
 
-            // Set timeout for fade out and navigation
-            const timer = setTimeout(() => {
+            // Wait for display duration, then fade out
+            const displayTimer = setTimeout(() => {
+                console.log('Starting fade out');
+
                 Animated.timing(fadeAnim, {
                     toValue: 0,
-                    duration: 500,
+                    duration: FADE_OUT_DURATION,
                     useNativeDriver: true,
                 }).start(() => {
-                    navigation.replace('Login');
+                    console.log('Navigating away from startup');
+                    handleNavigation();
                 });
-            }, 2500);
+            }, DISPLAY_DURATION);
 
-            return () => clearTimeout(timer);
+            return () => clearTimeout(displayTimer);
         }
-    }, [imageLoaded]);
+    }, [canNavigate]);
+
+    const handleNavigation = async () => {
+        if (hasNavigated.current) {
+            console.log('Navigation already in progress, skipping');
+            return;
+        }
+
+        hasNavigated.current = true;
+        console.log('Navigation allowed - starting');
+        console.log('Session status:', session ? 'Logged in' : 'Not logged in');
+
+        try {
+            // Check if user is authenticated
+            if (session) {
+                // User is logged in, go to Main
+                navigation.replace('Main');
+            } else {
+                // User is not logged in, go to Login
+                navigation.replace('Login');
+            }
+        } catch (error) {
+            console.error('Navigation error:', error);
+            navigation.replace('Login');
+        }
+    };
 
     return (
         <LinearGradient
@@ -73,18 +113,12 @@ export default function Startup() {
             end={{ x: 0.5, y: 1 }}
         >
             <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-                {!loadError ? (
-                    <Image
-                        source={require('../../assets/images/transparent.png')}
-                        style={styles.image}
-                        onLoad={() => setImageLoaded(true)}
-                        onError={() => setLoadError(true)}
-                        fadeDuration={0} // Disable Android's default fade
-                        resizeMode="contain"
-                    />
-                ) : (
-                    <View style={styles.fallbackImage} />
-                )}
+                <Image
+                    source={require('../../assets/images/finallogo.png')}
+                    style={styles.image}
+                    fadeDuration={0}
+                    resizeMode="contain"
+                />
                 <Text style={styles.text}>ScanWizard</Text>
             </Animated.View>
         </LinearGradient>
@@ -101,12 +135,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     image: {
-        width: 100,
-        height: 100,
+        width: 110,
+        height: 110,
     },
     fallbackImage: {
-        width: 100,
-        height: 100,
+        width: 110,
+        height: 110,
         backgroundColor: 'rgba(255, 255, 255, 0.3)',
         borderRadius: 20,
     },
@@ -115,7 +149,7 @@ const styles = StyleSheet.create({
         fontFamily: fontFamily.extraBold,
         color: '#333',
         textAlign: 'center',
-        marginTop: 20,
+        marginTop: 15,
         fontWeight: 'bold',
         textShadowColor: 'rgba(0, 0, 0, 0.2)',
         textShadowOffset: { width: 1, height: 1 },

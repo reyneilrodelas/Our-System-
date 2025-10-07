@@ -425,7 +425,6 @@ const styles = StyleSheet.create({
     backButton: {
         padding: 10,
         borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.2)',
     },
     titleContainer: {
         flex: 1,

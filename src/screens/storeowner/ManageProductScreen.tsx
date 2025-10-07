@@ -374,13 +374,13 @@ const styles = StyleSheet.create({
         marginHorizontal: 10,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: 'bold',
         color: '#fff',
         textAlign: 'center',
     },
     headerSubtitle: {
-        fontSize: 14,
+        fontSize: 16,
         color: 'rgba(255,255,255,0.8)',
         textAlign: 'center',
         marginTop: 4,

@@ -67,7 +67,6 @@ export default function AdminDashboardScreen({ navigation }: AdminDashboardScree
                 </View>
                 <View style={styles.header}>
                     <Text style={styles.headerTitle}>Admin Dashboard</Text>
-                    <Text style={styles.headerSubtitle}>Welcome back, Admin</Text>
                 </View>
             </LinearGradient>
 
@@ -142,7 +141,6 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: 20,
-        backgroundColor: 'rgba(255, 255, 255, 0.2)',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -154,11 +152,6 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontFamily: fontFamily.bold,
         marginBottom: 8,
-    },
-    headerSubtitle: {
-        fontSize: 16,
-        color: '#E0E7FF',
-        fontFamily: fontFamily.medium,
     },
     statsContainer: {
         flexDirection: 'row',

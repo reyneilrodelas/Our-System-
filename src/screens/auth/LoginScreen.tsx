@@ -146,14 +146,21 @@ export default function LoginScreen({ navigation }: Props) {
         }
 
         try {
+            // Request password reset with verification code
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: 'com.scanner://reset-password/'
+                redirectTo: 'scanwizard://reset-password'
             });
             if (error) throw error;
 
             showStyledAlert(
                 'Reset Link Sent! 📧',
-                'Password reset link has been sent to your email. Please check your inbox and click the link to reset your password.',
+                'A password reset link has been sent to your email. Please check your inbox and click the link to reset your password.',
+                () => setStyledAlertVisible(false)
+            );
+
+            showStyledAlert(
+                'Verification Code Sent! 📧',
+                'A verification code has been sent to your email. Please check your inbox and enter the code to reset your password.',
                 () => setStyledAlertVisible(false)
             );
 

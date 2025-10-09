@@ -416,17 +416,6 @@ export default function AddStoreScreen() {
                 </View>
 
                 <View style={styles.formGroup}>
-                    <Text style={styles.label}>Store Address *</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="e.g. 123 Main Street, City"
-                        placeholderTextColor="#999"
-                        value={form.address}
-                        onChangeText={(text) => setForm({ ...form, address: text })}
-                    />
-                </View>
-
-                <View style={styles.formGroup}>
                     <Text style={styles.label}>Description</Text>
                     <TextInput
                         style={[styles.input, styles.descriptionInput]}
@@ -438,6 +427,19 @@ export default function AddStoreScreen() {
                         numberOfLines={4}
                     />
                 </View>
+
+                <View style={styles.formGroup}>
+                    <Text style={styles.label}>Store Address *</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="e.g. 123 Main Street, City"
+                        placeholderTextColor="#999"
+                        value={form.address}
+                        onChangeText={(text) => setForm({ ...form, address: text })}
+                    />
+                </View>
+
+
 
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Store Location *</Text>

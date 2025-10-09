@@ -2,15 +2,18 @@ export default {
   expo: {
     name: "ScanWizard",
     slug: "capstoneproject",
-    scheme: "com.scanwizard",
+    scheme: "scanwizard",
     platforms: ["ios", "android", "web"],
     version: "1.0.0",
     orientation: "portrait",
     icon: "./src/assets/images/Untitled-1.png",
     userInterfaceStyle: "light",
     newArchEnabled: true,
-    ios: {
-      supportsTablet: true
+    owner: "reyneilrodelas",
+    extra: {
+      eas: {
+        projectId: "b5b8fbd6-e34b-482e-9617-07309c630abe"
+      }
     },
     android: {
       config: {
@@ -24,7 +27,22 @@ export default {
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.RECORD_AUDIO"
       ],
-      package: "com.anonymous.Scanner"
+      package: "com.anonymous.Scanner",
+      intentFilters: [
+        {
+          action: "VIEW",
+          data: [
+            {
+              scheme: "scanwizard",
+            },
+          ],
+          category: ["BROWSABLE", "DEFAULT"],
+        },
+      ]
+    },
+    ios: {
+      bundleIdentifier: "com.anonymous.Scanner",
+      supportsTablet: true
     },
     plugins: [
       [
@@ -39,12 +57,6 @@ export default {
           locationAlwaysAndWhenInUsePermission: "Allow $(PRODUCT_NAME) to use your location."
         }
       ]
-    ],
-    extra: {
-      eas: {
-        projectId: "b5b8fbd6-e34b-482e-9617-07309c630abe"
-      }
-    },
-    owner: "reyneilrodelas"
+    ]
   }
 };

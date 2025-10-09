@@ -18,6 +18,7 @@ export type RootStackParamList = {
     AboutUs: undefined;
     ContactUs: undefined;
     ProfileMain: undefined;
+    
 
 } & StoreOwnerStackParamList & AdminStackParamList;
 

@@ -7,16 +7,15 @@ import {
     BarcodeScanningResult,
     BarcodeType,
 } from 'expo-camera';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, AppState, AppStateStatus } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StyledAlert } from '../components/StyledAlert';
-import { createClient } from '@supabase/supabase-js';
 import { CameraOverlay } from '../components/CameraOverlay';
+import { supabase } from '../../lib/supabase';
 
 type RootStackParamList = {
     ResultScreen: { productData: any };
-    // Add other screens and their params here if needed
 };
 
 const SCAN_TIMEOUT = 20000;
@@ -36,15 +35,13 @@ const SUPPORTED_BARCODE_TYPES: BarcodeType[] = [
     'upc_a',
 ];
 
-import { supabase } from '../../lib/supabase';
-
 export default function App() {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-    const isFocused = useIsFocused(); // Hook to check if screen is focused
+    const isFocused = useIsFocused();
     const [facing, setFacing] = useState<CameraType>('back');
     const [permission, requestPermission] = useCameraPermissions();
     const [torchEnabled, setTorchEnabled] = useState(false);
-    const [isScanning, setIsScanning] = useState(true); // Start scanning automatically
+    const [isScanning, setIsScanning] = useState(true);
     const [scanStatus, setScanStatus] = useState('Scanning...');
     const [hasSuccessfulScan, setHasSuccessfulScan] = useState(false);
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -53,43 +50,94 @@ export default function App() {
     const [alertMessage, setAlertMessage] = useState('');
     const [cameraKey, setCameraKey] = useState(0);
     const [cameraActive, setCameraActive] = useState(true);
-    const [previousTorchState, setPreviousTorchState] = useState(false); // Track previous torch state
+    const torchStateRef = useRef(false); // Use ref to track torch state for preservation
+    const [alertType, setAlertType] = useState<'timeout' | 'error'>('timeout'); // Track alert type
 
-    // Function to specifically turn off the torch
-    const turnOffTorch = () => {
-        setTorchEnabled(false);
-    };
-
-    // Reset function - preserve torch state
-    const resetScanner = (preserveTorch: boolean = false) => {
-        setIsScanning(true); // Keep scanning active
-        setScanStatus('Scanning...');
-
-        // Only reset torch if not preserving it
-        if (!preserveTorch) {
-            setTorchEnabled(false);
-        }
-
-        setHasSuccessfulScan(false);
-        setCameraActive(true); // Ensure camera is active
-
+    // Function to clear timeout
+    const clearScanTimeout = useCallback(() => {
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
-        startScanTimeout(); // Start the scan timeout immediately
-    };
+    }, []);
+
+    // Start timeout for scanning - use ref to avoid stale closures
+    const startScanTimeout = useCallback(() => {
+        clearScanTimeout();
+
+        timeoutRef.current = setTimeout(() => {
+            if (!isFocused) return;
+
+            // Store current torch state from ref (not from closure)
+            // torchStateRef.current is already in sync with torchEnabled
+
+            setIsScanning(false);
+            setScanStatus('No barcode found - Tap to retry');
+            setAlertTitle('Scan Failed');
+            setAlertMessage('No barcode detected. Would you like to try again?');
+            setAlertType('timeout');
+            setAlertVisible(true);
+            setCameraActive(true);
+        }, SCAN_TIMEOUT);
+    }, [clearScanTimeout, isFocused]);
+
+    // Reset function - memoized and simplified
+    const resetScanner = useCallback((restoreTorch: boolean = false) => {
+        setIsScanning(true);
+        setScanStatus('Scanning...');
+        setHasSuccessfulScan(false);
+        setCameraActive(true);
+        setAlertVisible(false);
+        clearScanTimeout();
+
+        // Restore torch if needed, otherwise turn off
+        if (restoreTorch) {
+            setTorchEnabled(torchStateRef.current);
+        } else {
+            setTorchEnabled(false);
+            torchStateRef.current = false;
+        }
+    }, [clearScanTimeout]);
+
+    const handleRetry = useCallback(() => {
+        setAlertVisible(false);
+
+        if (alertType === 'timeout') {
+            // For timeout: restore the torch state that was on before timeout
+            const savedTorchState = torchStateRef.current;
+            setTorchEnabled(savedTorchState);
+        } else {
+            // For errors: keep current torch state (it was already restored in error handler)
+            // Just ensure the ref is in sync
+            torchStateRef.current = torchEnabled;
+        }
+
+        // Reset scanner state
+        setIsScanning(true);
+        setScanStatus('Scanning...');
+        setHasSuccessfulScan(false);
+        setCameraActive(true);
+        clearScanTimeout();
+
+        // Reset camera key to force camera refresh
+        setCameraKey(prevKey => (prevKey + 1) % 1000);
+
+        // Start new timeout - small delay to ensure state is updated
+        setTimeout(() => {
+            startScanTimeout();
+        }, 100);
+    }, [alertType, torchEnabled, clearScanTimeout, startScanTimeout]);
 
     // Handle app state changes (background/foreground)
     useEffect(() => {
         const handleAppStateChange = (nextAppState: AppStateStatus) => {
-            if (nextAppState === 'active') {
-                // App came to foreground
+            if (nextAppState === 'active' && isFocused) {
                 setCameraActive(true);
                 resetScanner();
+                startScanTimeout();
             } else if (nextAppState === 'background') {
-                // App went to background
                 setCameraActive(false);
+                clearScanTimeout();
             }
         };
 
@@ -98,79 +146,57 @@ export default function App() {
         return () => {
             subscription.remove();
         };
-    }, []);
+    }, [isFocused, resetScanner, startScanTimeout, clearScanTimeout]);
 
     // Reset when screen comes into focus
     useEffect(() => {
         if (isFocused) {
-            // Screen is focused, activate camera and reset
             setCameraActive(true);
             resetScanner();
-            // Force camera reset by changing the key
-            setCameraKey(prevKey => prevKey + 1);
+            setCameraKey(prevKey => (prevKey + 1) % 1000);
+            startScanTimeout();
         } else {
-            // Screen is not focused, deactivate camera
             setCameraActive(false);
+            clearScanTimeout();
+            setAlertVisible(false);
         }
-    }, [isFocused]);
 
-    // Start timeout for scanning
-    const startScanTimeout = () => {
-        timeoutRef.current = setTimeout(() => {
-            // Store current torch state before timeout
-            setPreviousTorchState(torchEnabled);
+        return () => {
+            clearScanTimeout();
+        };
+    }, [isFocused, resetScanner, startScanTimeout, clearScanTimeout]);
 
-            setIsScanning(false);
-            setScanStatus('No barcode found - Tap to retry');
-            setAlertTitle('Scan Failed');
-            setAlertMessage('No barcode detected. Would you like to try again?');
-            setAlertVisible(true);
-            // Keep camera active for retry
-            setCameraActive(true);
-        }, SCAN_TIMEOUT);
-    };
-
-    const handleRetry = () => {
-        setAlertVisible(false);
-        // Reset scanner but preserve the previous torch state
-        resetScanner(previousTorchState);
-        // Restore torch state from before timeout
-        setTorchEnabled(previousTorchState);
-        // Force camera refresh
-        setCameraKey(prevKey => prevKey + 1);
-    };
+    // Sync ref with state
+    useEffect(() => {
+        torchStateRef.current = torchEnabled;
+    }, [torchEnabled]);
 
     const handleBarcodeScanned = async (result: BarcodeScanningResult) => {
-        if (!isScanning || !result?.data || !cameraActive) return;
+        if (!isScanning || !result?.data || !cameraActive || !isFocused) return;
 
         // Immediately stop scanning to prevent multiple scans
         setIsScanning(false);
-
-        // Clear the timeout
-        if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-        }
+        clearScanTimeout();
 
         // Check if barcode type is supported
         if (!SUPPORTED_BARCODE_TYPES.includes(result.type as BarcodeType)) {
             setScanStatus('Unsupported barcode');
             setAlertTitle('Unsupported Barcode');
             setAlertMessage(`Type: ${result.type}`);
+            setAlertType('error');
             setAlertVisible(true);
-            // Keep camera active for retry - preserve torch state
             setCameraActive(true);
             return;
         }
 
-        // Update status but keep camera active for error cases
         setScanStatus('Barcode scanned - Processing...');
         setHasSuccessfulScan(true);
 
-        // Store current torch state before processing
+        // Store current torch state
         const currentTorchState = torchEnabled;
+        torchStateRef.current = currentTorchState;
 
-        // Turn off torch if it's on during processing
+        // Turn off torch during processing
         if (torchEnabled) {
             setTorchEnabled(false);
         }
@@ -183,33 +209,36 @@ export default function App() {
                 .single();
 
             if (error) {
-                // Product not found - keep camera active for retry and restore torch
                 setAlertTitle('Product Not Found');
                 setAlertMessage('This product is not in our database. Would you like to try again?');
+                setAlertType('error');
                 setAlertVisible(true);
                 console.error('Supabase error:', error);
                 setHasSuccessfulScan(false);
                 setScanStatus('Product not found');
-                setCameraActive(true); // Keep camera active
+                setCameraActive(true);
                 // Restore torch state
                 setTorchEnabled(currentTorchState);
+                torchStateRef.current = currentTorchState;
                 return;
             }
 
             // Product found, navigate to results
-            // Only deactivate camera when successfully navigating away
+            clearScanTimeout();
             setCameraActive(false);
             navigation.navigate('ResultScreen', { productData: data });
         } catch (err) {
             console.error('Unexpected error:', err);
             setAlertTitle('Error');
             setAlertMessage('An unexpected error occurred. Please try again.');
+            setAlertType('error');
             setAlertVisible(true);
             setHasSuccessfulScan(false);
             setScanStatus('Error occurred');
-            setCameraActive(true); // Keep camera active for retry
+            setCameraActive(true);
             // Restore torch state
             setTorchEnabled(currentTorchState);
+            torchStateRef.current = currentTorchState;
         }
     };
 
@@ -222,10 +251,10 @@ export default function App() {
     };
 
     const handleBackPress = () => {
+        clearScanTimeout();
         navigation.goBack();
     };
 
-    // Ensure permission is granted
     if (!permission) return <View />;
     if (!permission.granted) {
         return (
@@ -242,7 +271,7 @@ export default function App() {
         <View style={styles.container}>
             {cameraActive ? (
                 <CameraView
-                    key={`camera-${cameraKey}`} // This is the key used to reset the camera
+                    key={`camera-${cameraKey}`}
                     style={styles.camera}
                     facing={facing}
                     enableTorch={torchEnabled}
@@ -251,7 +280,6 @@ export default function App() {
                     }}
                     onBarcodeScanned={isScanning ? handleBarcodeScanned : undefined}
                 >
-                    {/* Back Button */}
                     <TouchableOpacity
                         style={styles.backButton}
                         onPress={handleBackPress}
@@ -262,16 +290,15 @@ export default function App() {
                     <CameraOverlay
                         scanStatus={scanStatus}
                         isScanning={isScanning}
-                        onScanPress={() => { }} // Empty function since we don't need it
+                        onScanPress={() => { }}
                         onTorchPress={toggleTorch}
                         onFlipPress={toggleCameraFacing}
                         torchEnabled={torchEnabled}
-                        turnOffTorch={turnOffTorch}
+                        turnOffTorch={() => setTorchEnabled(false)}
                         hasSuccessfulScan={hasSuccessfulScan}
                     />
                 </CameraView>
             ) : (
-                // Show a loading or placeholder when camera is inactive
                 <View style={styles.cameraPlaceholder}>
                     <Text style={styles.placeholderText}>Camera inactive</Text>
                 </View>

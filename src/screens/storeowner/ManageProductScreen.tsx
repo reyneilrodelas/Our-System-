@@ -43,7 +43,8 @@ export default function ManageProductScreen() {
         if (searchQuery) {
             const filtered = assignedProducts.filter(product =>
                 product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                product.barcode.toLowerCase().includes(searchQuery.toLowerCase())
+                product.barcode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                product.description?.toLowerCase().includes(searchQuery.toLowerCase())
             );
             setFilteredProducts(filtered);
         } else {
@@ -75,7 +76,7 @@ export default function ManageProductScreen() {
             // Fetch product details for the assigned products
             const { data: productDetails, error: productDetailsError } = await supabase
                 .from('products')
-                .select('barcode, name')
+                .select('barcode, name, description')
                 .in('barcode', barcodes);
 
             if (productDetailsError) throw productDetailsError;
@@ -177,6 +178,28 @@ export default function ManageProductScreen() {
         setAssignedProducts(updatedProducts);
     };
 
+    // Helper function to handle text input with zero removal
+    const handleTextInputChange = (barcode: string, field: 'price' | 'stock', text: string) => {
+        // Remove leading zeros and convert to number
+        let processedValue = text;
+
+        if (text.length > 1 && text.startsWith('0') && !text.startsWith('0.')) {
+            processedValue = text.replace(/^0+/, '') || '0';
+        }
+
+        // If empty, set to empty string to show placeholder
+        if (processedValue === '' || processedValue === '0') {
+            processedValue = '';
+        }
+
+        handleInputChange(barcode, field, processedValue);
+    };
+
+    // Format display value - show empty string for zero values to display placeholder
+    const getDisplayValue = (value: number) => {
+        return value === 0 ? '' : value.toString();
+    };
+
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
@@ -227,7 +250,7 @@ export default function ManageProductScreen() {
                     <Ionicons name="search" size={20} color="#636e72" style={styles.searchIcon} />
                     <TextInput
                         style={styles.searchInput}
-                        placeholder="Search products by name or barcode..."
+                        placeholder="Search products by name, barcode or description..."
                         placeholderTextColor="#636e72"
                         value={searchQuery}
                         onChangeText={setSearchQuery}
@@ -270,16 +293,23 @@ export default function ManageProductScreen() {
                 ) : (
                     filteredProducts.map((product) => (
                         <View key={product.barcode} style={styles.productCard}>
-                            <Text style={styles.productName}>{product.name}</Text>
+                            <View style={styles.productHeader}>
+                                <Text style={styles.productName}>{product.name}</Text>
+                            </View>
+
+                            {product.description && (
+                                <Text style={styles.productDescription}>{product.description}</Text>
+                            )}
+
                             <Text style={styles.productBarcode}>Barcode: {product.barcode}</Text>
 
                             <View style={styles.formGroup}>
                                 <Text style={styles.label}>Price (₱)</Text>
                                 <TextInput
                                     style={styles.input}
-                                    value={product.price.toString()}
+                                    value={getDisplayValue(product.price)}
                                     keyboardType="decimal-pad"
-                                    onChangeText={(value) => handleInputChange(product.barcode, 'price', value)}
+                                    onChangeText={(value) => handleTextInputChange(product.barcode, 'price', value)}
                                     placeholder="0.00"
                                     placeholderTextColor="#999"
                                 />
@@ -289,9 +319,9 @@ export default function ManageProductScreen() {
                                 <Text style={styles.label}>Stock</Text>
                                 <TextInput
                                     style={styles.input}
-                                    value={product.stock.toString()}
+                                    value={getDisplayValue(product.stock)}
                                     keyboardType="numeric"
-                                    onChangeText={(value) => handleInputChange(product.barcode, 'stock', value)}
+                                    onChangeText={(value) => handleTextInputChange(product.barcode, 'stock', value)}
                                     placeholder="0"
                                     placeholderTextColor="#999"
                                 />
@@ -433,11 +463,19 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 3,
     },
+    productHeader: {
+        marginBottom: 5,
+    },
     productName: {
         fontSize: 18,
         fontWeight: 'bold',
-        marginBottom: 5,
         color: '#2d3436',
+    },
+    productDescription: {
+        fontSize: 14,
+        color: '#636e72',
+        marginBottom: 10,
+        fontStyle: 'italic',
     },
     productBarcode: {
         fontSize: 12,

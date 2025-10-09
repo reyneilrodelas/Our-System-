@@ -1,16 +1,18 @@
 // App.tsx
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavigationContainer, getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { Linking } from 'react-native';
 import { RootStackParamList, HomeStackParamList, TabParamList, StoreOwnerStackParamList, AdminStackParamList } from './src/types/navigation';
 
 // Screens
 import LoginScreen from './src/screens/auth/LoginScreen';
 import SignupScreen from './src/screens/auth/SignupScreen';
+import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import HomeScreen from './src/screens/shared/HomeScreen';
 import ScannerScreen from './src/screens/shared/scanner';
 import SearchScreen from './src/screens/shared/SearchScreen';
@@ -210,6 +212,7 @@ function RootNavigator() {
       {/* Auth screens */}
       <RootStack.Screen name="Login" component={LoginScreen} />
       <RootStack.Screen name="Signup" component={SignupScreen} />
+      <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
 
       {/* Main app screens */}
       <RootStack.Screen name="Main" component={TabNavigator} />
@@ -241,9 +244,41 @@ function AdminStackScreen() {
 
 // App Entry Point
 export default function App() {
+  const linking = {
+    prefixes: ['scanwizard://'],
+    config: {
+      screens: {
+        ResetPassword: 'reset-password',
+        Login: 'login',
+        // Add other deep link routes as needed
+      },
+    },
+  };
+
+  useEffect(() => {
+    // Handle deep links when app is not running (cold start)
+    const getInitialURL = async () => {
+      const url = await Linking.getInitialURL();
+      if (url) {
+        console.log('Initial URL:', url);
+      }
+    };
+
+    getInitialURL();
+
+    // Handle deep links when app is running
+    const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
+      console.log('Received URL:', url);
+    });
+
+    return () => {
+      linkingSubscription.remove();
+    };
+  }, []);
+
   return (
     <AuthProvider>
-      <NavigationContainer>
+      <NavigationContainer linking={linking}>
         <RootNavigator />
       </NavigationContainer>
     </AuthProvider>

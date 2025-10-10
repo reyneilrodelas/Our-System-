@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyledAlert } from './StyledAlert';
-import MapView, { Marker, Circle, Callout } from 'react-native-maps';
+import MapView, { Marker, Circle, Callout, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -31,6 +31,7 @@ interface RouteParams {
     storeData?: Array<{ stores: Store } | Store>;
     userLocation?: { latitude: number; longitude: number };
     focusStoreId?: string;
+    selectedDistance?: number;
 }
 
 const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -51,6 +52,7 @@ const MapScreen = () => {
     const route = useRoute();
     const navigation = useNavigation();
     const params = route.params as RouteParams;
+    const mapRef = useRef<MapView>(null);
 
     const [userLocation, setUserLocation] = useState<{ latitude: number, longitude: number } | null>(null);
     const [selectedDistance, setSelectedDistance] = useState(1);
@@ -62,6 +64,7 @@ const MapScreen = () => {
     const [alertTitle, setAlertTitle] = useState('');
     const [alertMessage, setAlertMessage] = useState('');
     const [pickerVisible, setPickerVisible] = useState(false);
+    const [currentRegion, setCurrentRegion] = useState<Region | null>(null);
 
     // Distance options
     const distances = [
@@ -137,14 +140,37 @@ const MapScreen = () => {
                     );
                     setStoreDistance(distance);
                 }
+
+                // Animate to the focused store
+                if (mapRef.current) {
+                    mapRef.current.animateToRegion({
+                        latitude: store.latitude,
+                        longitude: store.longitude,
+                        latitudeDelta: 0.05,
+                        longitudeDelta: 0.05,
+                    }, 1000);
+                }
             }
         }
     }, [params?.focusStoreId, normalizedStores, userLocation]);
 
+    // Update region when distance changes
+    useEffect(() => {
+        if (userLocation && mapRef.current) {
+            const adjustedDistance = selectedDistance < 1 ? 10 : selectedDistance;
+            mapRef.current.animateToRegion({
+                latitude: userLocation.latitude,
+                longitude: userLocation.longitude,
+                latitudeDelta: adjustedDistance / 60,
+                longitudeDelta: adjustedDistance / 60,
+            }, 500);
+        }
+    }, [selectedDistance, userLocation]);
+
     const adjustedDistance = selectedDistance < 1 ? 10 : selectedDistance;
 
-    // Region calculation - PRIORITIZE USER LOCATION
-    const region = userLocation
+    // Initial region calculation - only used for initial map render
+    const initialRegion = userLocation
         ? {
             latitude: userLocation.latitude,
             longitude: userLocation.longitude,
@@ -191,6 +217,10 @@ const MapScreen = () => {
 
     const handleMapPress = () => {
         setSelectedStore(null);
+    };
+
+    const handleRegionChangeComplete = (region: Region) => {
+        setCurrentRegion(region);
     };
 
     // Show loading until we have a location decision
@@ -366,13 +396,17 @@ const MapScreen = () => {
 
             <TouchableWithoutFeedback onPress={handleMapPress}>
                 <MapView
+                    ref={mapRef}
                     style={styles.map}
-                    region={region}
-                    showsUserLocation={!!userLocation}
+                    initialRegion={initialRegion}
                     mapType={mapType}
+                    showsUserLocation={!!userLocation}
                     showsMyLocationButton={true}
                     zoomEnabled={true}
                     scrollEnabled={true}
+                    onRegionChangeComplete={handleRegionChangeComplete}
+                    pitchEnabled={true}
+                    rotateEnabled={true}
                 >
                     {userLocation && (
                         <Circle
@@ -397,6 +431,8 @@ const MapScreen = () => {
                             title={store.name}
                             description={store.address}
                             onPress={() => handleMarkerPress(store)}
+                            anchor={{ x: 0.5, y: 1 }}
+                            centerOffset={{ x: 0, y: -20 }}
                         >
                             <Image
                                 source={require('../../assets/images/marker.png')}
@@ -515,7 +551,7 @@ const styles = StyleSheet.create({
     leftSection: {
         flex: 0.8,
         alignItems: 'flex-start',
-        
+
     },
     centerSection: {
         flex: 1.2,

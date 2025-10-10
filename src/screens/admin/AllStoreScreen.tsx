@@ -10,7 +10,8 @@ import {
     ScrollView,
     Animated,
     TouchableWithoutFeedback,
-    Dimensions
+    Dimensions,
+    Alert
 } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,6 +53,7 @@ export default function AllStoresScreen() {
             params: { storeId: store.id }
         });
     };
+
     const [stores, setStores] = useState<Store[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -81,7 +83,7 @@ export default function AllStoresScreen() {
 
         if (error) {
             console.log('Error fetching stores:', error);
-            alert('Error fetching stores');
+            Alert.alert('Error', 'Failed to fetch stores');
         } else {
             setStores(data || []);
         }
@@ -142,32 +144,82 @@ export default function AllStoresScreen() {
         }
     };
 
+    // IMPROVED: Better email fetching with multiple fallback methods
     const getStoreOwnerEmail = async (ownerId: string): Promise<string | null> => {
         try {
-            console.log('Fetching email for owner ID:', ownerId);
+            console.log('🔍 Fetching email for owner ID:', ownerId);
 
-            const { data: ownerData, error } = await supabase
-                .from('profiles') // ✅ Corrected table name
-                .select('email, full_name')
+            // Method 1: Try using RPC function (most reliable if set up)
+            try {
+                const { data: rpcEmail, error: rpcError } = await supabase
+                    .rpc('get_user_email', { user_id: ownerId });
+
+                if (!rpcError && rpcEmail) {
+                    console.log('✅ Found email via RPC:', rpcEmail);
+                    return rpcEmail;
+                }
+                console.log('⚠️ RPC method failed or unavailable:', rpcError?.message);
+            } catch (rpcError) {
+                console.log('⚠️ RPC not available:', rpcError);
+            }
+
+            // Method 2: Try profiles table with email column
+            const { data: profileData, error: profileError } = await supabase
+                .from('profiles')
+                .select('email')
                 .eq('id', ownerId)
                 .single();
 
-            if (error) {
-                console.error('Error fetching owner email:', error);
-                console.error('Error details:', error.message);
-                return null;
+            if (!profileError && profileData?.email) {
+                console.log('✅ Found email from profiles table:', profileData.email);
+                return profileData.email;
+            }
+            console.log('⚠️ Profile lookup failed:', profileError?.message);
+
+            // Method 3: Try auth.users (requires admin privileges)
+            try {
+                const { data: { user }, error: authError } = await supabase.auth.admin.getUserById(ownerId);
+
+                if (!authError && user?.email) {
+                    console.log('✅ Found email from auth.users:', user.email);
+                    return user.email;
+                }
+                console.log('⚠️ Auth lookup failed:', authError?.message);
+            } catch (authError) {
+                console.log('⚠️ Auth admin not available:', authError);
             }
 
-            console.log('Found owner data:', ownerData);
-            return ownerData?.email || null;
+            console.error('❌ All email lookup methods failed');
+            return null;
         } catch (error) {
-            console.error('Error in getStoreOwnerEmail:', error);
+            console.error('❌ Error in getStoreOwnerEmail:', error);
             return null;
         }
     };
 
+    // IMPROVED: Better error handling and validation
     const sendStatusEmail = async (storeEmail: string, storeName: string, status: 'approved' | 'rejected') => {
         try {
+            console.log('📧 Preparing to send email...');
+            console.log('To:', storeEmail);
+            console.log('Store:', storeName);
+            console.log('Status:', status);
+
+            // Validate email configuration
+            if (!emailConfig.RESEND_API_KEY) {
+                throw new Error('Missing RESEND_API_KEY in configuration');
+            }
+            if (!emailConfig.SENDER_EMAIL) {
+                throw new Error('Missing SENDER_EMAIL in configuration');
+            }
+
+            // Validate recipient email
+            if (!storeEmail || !storeEmail.includes('@')) {
+                throw new Error('Invalid recipient email address');
+            }
+
+            console.log('✅ Email configuration validated');
+
             const response = await fetch('https://api.resend.com/emails', {
                 method: 'POST',
                 headers: {
@@ -180,7 +232,9 @@ export default function AllStoresScreen() {
                     subject: `Store Registration ${status === 'approved' ? 'Approved!' : 'Status Update'}`,
                     html: `
                         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                            <h2 style="color: ${status === 'approved' ? '#4CAF50' : '#F44336'}">Store Registration ${status.charAt(0).toUpperCase() + status.slice(1)}</h2>
+                            <h2 style="color: ${status === 'approved' ? '#4CAF50' : '#F44336'}">
+                                Store Registration ${status.charAt(0).toUpperCase() + status.slice(1)}
+                            </h2>
                             <p>Dear Store Owner,</p>
                             <p>We are writing to inform you that your store "<strong>${storeName}</strong>" has been <strong>${status}</strong> by the administrator.</p>
                             ${status === 'approved'
@@ -201,7 +255,7 @@ export default function AllStoresScreen() {
                                         <li>Unable to verify business credentials</li>
                                         <li>Violation of platform policies</li>
                                     </ul>
-                                    <p>For more information about why your store was rejected or to appeal this decision, please contact our administrator at ${emailConfig.ADMIN_EMAIL}.</p>
+                                    <p>For more information about why your store was rejected or to appeal this decision, please contact our administrator at ${emailConfig.ADMIN_EMAIL || 'scanwizard@gmail.com'}.</p>
                                    </div>`
                         }
                             <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
@@ -212,25 +266,31 @@ export default function AllStoresScreen() {
                 })
             });
 
+            console.log('📬 Email API Response Status:', response.status);
+
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to send email');
+                console.error('❌ Email API Error:', errorData);
+                throw new Error(errorData.message || `Email API returned status ${response.status}`);
             }
 
+            const responseData = await response.json();
+            console.log('✅ Email sent successfully:', responseData);
             return true;
         } catch (error) {
-            console.error('Error sending email:', error);
+            console.error('❌ Error sending email:', error);
             throw error;
         }
     };
 
+    // IMPROVED: Better status change handling with detailed feedback
     const handleStatusChange = async (storeId: string, newStatus: 'approved' | 'rejected', event?: any) => {
         if (event) {
             event.stopPropagation();
         }
 
         try {
-            console.log('Starting status change for store:', storeId);
+            console.log('🔄 Starting status change for store:', storeId);
 
             // First, get the store details
             const { data: storeData, error: storeError } = await supabase
@@ -240,13 +300,16 @@ export default function AllStoresScreen() {
                 .single();
 
             if (storeError || !storeData) {
-                console.error('Error fetching store details:', storeError);
-                alert('Error fetching store details');
+                console.error('❌ Error fetching store details:', storeError);
+                Alert.alert('Error', 'Failed to fetch store details');
                 return;
             }
 
-            console.log('Store data:', storeData);
-            console.log('Store owner ID:', storeData.owner_id);
+            console.log('✅ Store data retrieved:', {
+                name: storeData.name,
+                owner_id: storeData.owner_id,
+                email: storeData.email
+            });
 
             // Update store status
             const { error: updateError } = await supabase
@@ -255,59 +318,76 @@ export default function AllStoresScreen() {
                 .eq('id', storeId);
 
             if (updateError) {
-                console.error('Error updating store status:', updateError);
-                alert(`Failed to ${newStatus} the store`);
+                console.error('❌ Error updating store status:', updateError);
+                Alert.alert('Error', `Failed to ${newStatus} the store`);
                 return;
             }
 
-            // Update stores state first
+            console.log('✅ Store status updated successfully');
+
+            // Update UI state
             setStores(stores.map(store =>
                 store.id === storeId ? { ...store, status: newStatus } : store
             ));
 
-            // Update selected store if it's the one being modified
             if (selectedStore && selectedStore.id === storeId) {
                 setSelectedStore({ ...selectedStore, status: newStatus });
             }
 
             // Try to get owner's email and send notification
-            let emailSent = false;
             let ownerEmail = null;
+            let emailSource = '';
 
-            // First try to get owner's email from profiles table
+            // First try to get owner's email from profiles/auth
             if (storeData.owner_id) {
                 ownerEmail = await getStoreOwnerEmail(storeData.owner_id);
-                console.log('Owner email from profiles table:', ownerEmail);
+                if (ownerEmail) {
+                    emailSource = 'owner profile';
+                }
             }
 
-            // If no owner email found, try store's direct email as fallback
+            // Fallback to store's direct email
             if (!ownerEmail && storeData.email) {
                 ownerEmail = storeData.email;
-                console.log('Using store email as fallback:', ownerEmail);
+                emailSource = 'store email';
+                console.log('📧 Using store email as fallback:', ownerEmail);
             }
 
             // Send email notification if we found an email
             if (ownerEmail && ownerEmail.trim() !== '') {
                 try {
-                    console.log('Attempting to send email to:', ownerEmail);
+                    console.log(`📧 Attempting to send email to: ${ownerEmail} (from ${emailSource})`);
                     await sendStatusEmail(ownerEmail, storeData.name, newStatus);
-                    emailSent = true;
-                    alert(`Store ${newStatus} successfully! \nEmail notification sent to ${ownerEmail}`);
-                } catch (emailError) {
-                    console.error('Email sending error:', emailError);
-                    alert(`Store status updated but failed to send email notification. \nPlease try again or contact support.`);
+
+                    Alert.alert(
+                        'Success',
+                        `Store ${newStatus} successfully!\n\nEmail notification sent to:\n${ownerEmail}`,
+                        [{ text: 'OK' }]
+                    );
+                } catch (emailError: any) {
+                    console.error('❌ Email sending error:', emailError);
+
+                    Alert.alert(
+                        'Partial Success',
+                        `Store status updated to ${newStatus}.\n\nHowever, email notification failed:\n${emailError.message}\n\nPlease check:\n• Resend API key is valid\n• Sender email is verified\n• Recipient email is correct`,
+                        [{ text: 'OK' }]
+                    );
                 }
             } else {
-                console.log('No email address found for store owner');
-                alert(`Store ${newStatus} successfully! \nNo email address found for store owner notification.`);
+                console.log('⚠️ No email address found for notification');
+                Alert.alert(
+                    'Success',
+                    `Store ${newStatus} successfully!\n\nNote: No email address found for owner notification.\n\nOwner ID: ${storeData.owner_id || 'N/A'}\nStore Email: ${storeData.email || 'N/A'}`,
+                    [{ text: 'OK' }]
+                );
             }
 
-            // Refresh the stores list to reflect changes
+            // Refresh the stores list
             fetchStores();
 
-        } catch (error) {
-            console.error('Error in handleStatusChange:', error);
-            alert('An unexpected error occurred');
+        } catch (error: any) {
+            console.error('❌ Error in handleStatusChange:', error);
+            Alert.alert('Error', `An unexpected error occurred: ${error.message}`);
         }
     };
 

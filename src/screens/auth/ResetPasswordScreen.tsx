@@ -19,6 +19,7 @@ import { StyledAlert } from '../components/StyledAlert';
 type Props = NativeStackScreenProps<RootStackParamList, 'ResetPassword'>;
 
 export default function ResetPasswordScreen({ route, navigation }: Props) {
+    const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -28,42 +29,75 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
     const [styledAlertMessage, setStyledAlertMessage] = useState('');
     const [alertOnOk, setAlertOnOk] = useState<(() => void) | undefined>();
 
+    // Password visibility states
+    const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
     // Check for valid auth session on component mount
     useEffect(() => {
         checkAuthSession();
+
+        // Listen for auth state changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (!session) {
+                navigation.replace('Login');
+            } else if (event === 'TOKEN_REFRESHED') {
+                setCheckingSession(false);
+            }
+        });
+
+        return () => {
+            subscription.unsubscribe();
+        };
     }, []);
 
     const checkAuthSession = async () => {
         try {
-            const { data: { session }, error } = await supabase.auth.getSession();
+            // First check if there's an active session
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-            if (error) {
-                console.error('Error checking session:', error);
-                showStyledAlert(
-                    'Session Error',
-                    'Unable to verify your session. Please request a new password reset link.',
-                    () => navigation.replace('Login')
-                );
-                return;
+            if (sessionError) {
+                console.error('Error checking session:', sessionError);
+                throw new Error('Unable to verify session');
             }
 
             if (!session) {
-                showStyledAlert(
-                    'Invalid Session',
-                    'Your password reset link has expired or is invalid. Please request a new one.',
-                    () => navigation.replace('Login')
-                );
-                return;
+                // Try to refresh the session
+                const { data: { session: refreshedSession }, error: refreshError } =
+                    await supabase.auth.refreshSession();
+
+                if (refreshError) {
+                    console.error('Error refreshing session:', refreshError);
+                    throw new Error('Session refresh failed');
+                }
+
+                if (!refreshedSession) {
+                    throw new Error('No valid session found');
+                }
+            }
+
+            // Check if the user has reset password capabilities
+            const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+            if (userError || !user) {
+                console.error('Error getting user:', userError);
+                throw new Error('Unable to verify user');
             }
 
             // Session is valid, user can proceed
             setCheckingSession(false);
         } catch (error: any) {
-            console.error('Error checking auth session:', error);
+            console.error('Auth session error:', error);
             showStyledAlert(
-                'Error',
-                'An error occurred. Please try again.',
-                () => navigation.replace('Login')
+                'Session Error',
+                'Your password reset link has expired or is invalid. Please request a new password reset link.',
+                () => {
+                    // Clear any existing session
+                    supabase.auth.signOut().finally(() => {
+                        navigation.replace('Login');
+                    });
+                }
             );
         }
     };
@@ -105,15 +139,36 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
         return { isValid: true };
     };
 
+    const verifyCurrentPassword = async (email: string, password: string): Promise<boolean> => {
+        try {
+            const { error } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+            });
+
+            if (error) {
+                return false;
+            }
+            return true;
+        } catch (error) {
+            return false;
+        }
+    };
+
     const handleResetPassword = async () => {
         // Validate inputs
-        if (!newPassword.trim() || !confirmPassword.trim()) {
+        if (!currentPassword.trim() || !newPassword.trim() || !confirmPassword.trim()) {
             showStyledAlert('Error', 'Please fill in all fields');
             return;
         }
 
         if (newPassword !== confirmPassword) {
             showStyledAlert('Error', 'Passwords do not match');
+            return;
+        }
+
+        if (currentPassword === newPassword) {
+            showStyledAlert('Error', 'New password must be different from current password');
             return;
         }
 
@@ -126,15 +181,40 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
         setLoading(true);
         try {
-            const { error } = await supabase.auth.updateUser({
+            // First verify that we have a valid session
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+            if (sessionError || !session) {
+                throw new Error('Invalid session. Please request a new password reset link.');
+            }
+
+            // Get current user email
+            const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+            if (userError || !user || !user.email) {
+                throw new Error('Unable to verify user information.');
+            }
+
+            // Verify current password
+            const isCurrentPasswordValid = await verifyCurrentPassword(user.email, currentPassword);
+
+            if (!isCurrentPasswordValid) {
+                showStyledAlert('Error', 'Current password is incorrect. Please try again.');
+                setLoading(false);
+                return;
+            }
+
+            // Attempt to update the password
+            const { error: updateError } = await supabase.auth.updateUser({
                 password: newPassword
             });
 
-            if (error) {
-                throw error;
+            if (updateError) {
+                throw updateError;
             }
 
             // Clear form
+            setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
 
@@ -142,7 +222,7 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
                 'Success',
                 'Your password has been reset successfully. Please log in with your new password.',
                 () => {
-                    // Sign out the user to ensure they use new credentials
+                    // Sign out the user and clear the session
                     supabase.auth.signOut().finally(() => {
                         navigation.replace('Login');
                     });
@@ -154,9 +234,13 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
             // Handle specific error cases
             let errorMessage = 'Failed to reset password. Please try again.';
 
-            if (error.message?.includes('session')) {
+            if (error.message?.includes('session') || error.message?.includes('JWT')) {
                 errorMessage = 'Your session has expired. Please request a new password reset link.';
-                showStyledAlert('Error', errorMessage, () => navigation.replace('Login'));
+                showStyledAlert('Error', errorMessage, () => {
+                    supabase.auth.signOut().finally(() => {
+                        navigation.replace('Login');
+                    });
+                });
                 return;
             } else if (error.message) {
                 errorMessage = error.message;
@@ -190,35 +274,82 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
                 <View style={styles.content}>
                     <Text style={styles.title}>Reset Password</Text>
                     <Text style={styles.subtitle}>
-                        Please enter your new password below
+                        Please enter your current password and new password below
                     </Text>
 
                     <View style={styles.inputContainer}>
+                        <Text style={styles.label}>Current Password</Text>
+                        <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                                style={styles.passwordInput}
+                                placeholder="Enter current password"
+                                value={currentPassword}
+                                onChangeText={setCurrentPassword}
+                                secureTextEntry={!showCurrentPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeButton}
+                                onPress={() => setShowCurrentPassword(!showCurrentPassword)}
+                                disabled={loading}
+                            >
+                                <Text style={styles.eyeIcon}>
+                                    {showCurrentPassword ? '👁️' : '👁️‍🗨️'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <View style={styles.inputContainer}>
                         <Text style={styles.label}>New Password</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Enter new password"
-                            value={newPassword}
-                            onChangeText={setNewPassword}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            editable={!loading}
-                        />
+                        <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                                style={styles.passwordInput}
+                                placeholder="Enter new password"
+                                value={newPassword}
+                                onChangeText={setNewPassword}
+                                secureTextEntry={!showNewPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeButton}
+                                onPress={() => setShowNewPassword(!showNewPassword)}
+                                disabled={loading}
+                            >
+                                <Text style={styles.eyeIcon}>
+                                    {showNewPassword ? '👁️' : '👁️‍🗨️'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
                     <View style={styles.inputContainer}>
                         <Text style={styles.label}>Confirm Password</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Confirm new password"
-                            value={confirmPassword}
-                            onChangeText={setConfirmPassword}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            editable={!loading}
-                        />
+                        <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                                style={styles.passwordInput}
+                                placeholder="Confirm new password"
+                                value={confirmPassword}
+                                onChangeText={setConfirmPassword}
+                                secureTextEntry={!showConfirmPassword}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!loading}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeButton}
+                                onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                                disabled={loading}
+                            >
+                                <Text style={styles.eyeIcon}>
+                                    {showConfirmPassword ? '👁️' : '👁️‍🗨️'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
                     <View style={styles.requirementsContainer}>
@@ -324,6 +455,34 @@ const styles = StyleSheet.create({
         fontFamily: fontFamily.regular,
         fontSize: 16,
         backgroundColor: '#fff',
+    },
+    passwordInputWrapper: {
+        position: 'relative',
+        width: '100%',
+    },
+    passwordInput: {
+        width: '100%',
+        height: 50,
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 8,
+        paddingHorizontal: 15,
+        paddingRight: 50,
+        fontFamily: fontFamily.regular,
+        fontSize: 16,
+        backgroundColor: '#fff',
+    },
+    eyeButton: {
+        position: 'absolute',
+        right: 15,
+        top: 0,
+        height: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 30,
+    },
+    eyeIcon: {
+        fontSize: 20,
     },
     requirementsContainer: {
         backgroundColor: '#f8f9fa',

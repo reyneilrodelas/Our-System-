@@ -26,7 +26,6 @@ import MyShopScreen from './src/screens/storeowner/MyShopScreen';
 import AssignProductsScreen from './src/screens/storeowner/AssignProductsScreen';
 import AdminApprovalScreen from './src/screens/admin/AdminApprovalScreen';
 import AdminDashboard from './src/screens/admin/AdminDashboard';
-import AdminSetupScreen from './src/screens/admin/AdminSetupScreen';
 import CreateStoreScreen from './src/screens/storeowner/CreateStroreScreen';
 import MyStoresScreen from './src/screens/storeowner/MyStoresScreen';
 import StoreDetailsScreen from './src/screens/storeowner/StoreDetailsScreen';
@@ -222,7 +221,6 @@ function RootNavigator() {
       <RootStack.Screen name="MapScreen" component={MapScreen} />
       <RootStack.Screen name="AdminDashboard" component={AdminDashboard} />
       <RootStack.Screen name="Approvals" component={AdminApprovalScreen} />
-      <RootStack.Screen name="AdminSetup" component={AdminSetupScreen} />
       <RootStack.Screen name="AllStores" component={AllStoresScreen} />
       <RootStack.Screen name="StoreProductDetailsScreen" component={StoreProductDetailsScreen} />
 

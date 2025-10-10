@@ -6,7 +6,6 @@ import {
     TextInput,
     TouchableOpacity,
     StyleSheet,
-    Image,
     ActivityIndicator,
     Linking,
     ScrollView,
@@ -43,23 +42,14 @@ export default function LoginScreen({ navigation }: Props) {
     const [styledAlertMessage, setStyledAlertMessage] = useState('');
     const [styledAlertOnOk, setStyledAlertOnOk] = useState<(() => void) | null>(null);
 
-    // Navigation guard to prevent multiple navigations
+    // Navigation guard
     const isNavigating = useRef(false);
-    const navigationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isLoggingIn = useRef(false);
 
     // Animation refs
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
     const scaleAnim = useRef(new Animated.Value(0.95)).current;
-
-    useEffect(() => {
-        // Cleanup function to clear timeouts
-        return () => {
-            if (navigationTimeoutRef.current) {
-                clearTimeout(navigationTimeoutRef.current);
-            }
-        };
-    }, []);
 
     useEffect(() => {
         // Entrance animation
@@ -82,7 +72,7 @@ export default function LoginScreen({ navigation }: Props) {
             }),
         ]).start();
 
-        // Check for existing session
+        // Check for existing session only once on mount
         checkSession();
 
         // Listen for deep links
@@ -95,24 +85,12 @@ export default function LoginScreen({ navigation }: Props) {
                 const type = params.get('type');
 
                 if (type === 'recovery' && token) {
-                    showStyledAlert(
-                        'Reset Password',
-                        'Please enter your new password',
-                        () => setStyledAlertVisible(false)
-                    );
+                    navigation.navigate('ResetPassword');
                 }
-            } else if (url.includes('login-callback')) {
-                checkSession();
             }
         };
 
         const subscription = Linking.addEventListener('url', handleDeepLink);
-        const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            console.log('Auth state changed:', event, session?.user?.id);
-            if (session && event === 'SIGNED_IN') {
-                await handlePostLoginNavigation(session.user);
-            }
-        });
 
         Linking.getInitialURL().then(url => {
             if (url) {
@@ -124,18 +102,18 @@ export default function LoginScreen({ navigation }: Props) {
         });
 
         return () => {
-            authSubscription.unsubscribe();
             subscription.remove();
-            if (navigationTimeoutRef.current) {
-                clearTimeout(navigationTimeoutRef.current);
-            }
         };
-    }, [navigation, fadeAnim, slideAnim, scaleAnim]);
+    }, []);
 
     const checkSession = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-            await handlePostLoginNavigation(session.user);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session && !isLoggingIn.current) {
+                navigation.replace('Main');
+            }
+        } catch (error) {
+            console.error('Session check error:', error);
         }
     };
 
@@ -146,7 +124,6 @@ export default function LoginScreen({ navigation }: Props) {
         }
 
         try {
-            // Request password reset with verification code
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
                 redirectTo: 'scanwizard://reset-password'
             });
@@ -157,17 +134,6 @@ export default function LoginScreen({ navigation }: Props) {
                 'A password reset link has been sent to your email. Please check your inbox and click the link to reset your password.',
                 () => setStyledAlertVisible(false)
             );
-
-            showStyledAlert(
-                'Verification Code Sent! 📧',
-                'A verification code has been sent to your email. Please check your inbox and enter the code to reset your password.',
-                () => setStyledAlertVisible(false)
-            );
-
-            // Keep success alert visible longer
-            setTimeout(() => {
-                setStyledAlertVisible(false);
-            }, 6000);
         } catch (error) {
             showStyledAlert('Reset Failed', (error as any).message);
         }
@@ -192,60 +158,8 @@ export default function LoginScreen({ navigation }: Props) {
                 'A new confirmation email has been sent. Please check your inbox and click the link to verify your account.',
                 () => setStyledAlertVisible(false)
             );
-
-            // Keep success alert visible longer
-            setTimeout(() => {
-                setStyledAlertVisible(false);
-            }, 6000);
         } catch (error) {
             showStyledAlert('Resend Failed', (error as any).message || 'Failed to resend confirmation email');
-        }
-    };
-
-    const handlePostLoginNavigation = async (user: any) => {
-        // Prevent multiple navigation attempts
-        if (isNavigating.current) {
-            console.log('Navigation already in progress, skipping...');
-            return;
-        }
-
-        try {
-            isNavigating.current = true;
-
-            const { data: { user: currentUser }, error } = await supabase.auth.getUser();
-            if (error) throw error;
-
-            const isAdmin = await verifyAdmin();
-
-            // Show success message
-            showStyledAlert(
-                "Welcome Back! 🎉",
-                "You've successfully logged in to your account.",
-                () => {
-                    setStyledAlertVisible(false);
-                    // Navigate after alert is dismissed
-                    navigationTimeoutRef.current = setTimeout(() => {
-                        if (!isNavigating.current) return;
-                        navigation.replace('Main');
-                        isNavigating.current = false;
-                    }, 100);
-                }
-            );
-
-            // Show admin message if applicable (after navigation)
-            if (isAdmin) {
-                navigationTimeoutRef.current = setTimeout(() => {
-                    showStyledAlert(
-                        'Admin Access Granted 👑',
-                        'You can access admin features from your profile.',
-                        () => setStyledAlertVisible(false)
-                    );
-                }, 3000);
-            }
-        } catch (error) {
-            console.error('Navigation error:', error);
-            isNavigating.current = false;
-            showStyledAlert('Authentication Error', 'Failed to authenticate user');
         }
     };
 
@@ -255,13 +169,12 @@ export default function LoginScreen({ navigation }: Props) {
             return;
         }
 
-        // Prevent multiple login attempts
-        if (isNavigating.current) {
-            console.log('Login already in progress, skipping...');
+        if (isLoggingIn.current || loginLoading) {
             return;
         }
 
         setLoginLoading(true);
+        isLoggingIn.current = true;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
@@ -274,13 +187,11 @@ export default function LoginScreen({ navigation }: Props) {
                 let errorMessage = error.message;
                 let alertTitle = 'Login Failed';
 
-                // Handle specific error cases
                 if (error.status === 400) {
                     if (error.message.includes('Email not confirmed')) {
                         alertTitle = 'Email Not Confirmed';
                         errorMessage = 'Your email address has not been confirmed yet. Please check your inbox for the confirmation email and click the verification link.';
 
-                        // Show additional option to resend confirmation
                         showStyledAlert(
                             alertTitle,
                             errorMessage + '\n\nWould you like us to resend the confirmation email?',
@@ -295,23 +206,14 @@ export default function LoginScreen({ navigation }: Props) {
                                 }, 500);
                             }
                         );
-                        setLoginLoading(false);
-                        isNavigating.current = false;
                         return;
                     } else if (error.message.includes('Invalid login credentials')) {
                         errorMessage = 'Invalid email or password. Please check your credentials and try again.';
-                    } else {
-                        errorMessage = 'Invalid email or password. Please check your credentials.';
                     }
-                } else if (error.status === 401) {
-                    errorMessage = 'Authentication failed. Please check your credentials.';
-                } else if (error.message.includes('signup_disabled')) {
-                    errorMessage = 'New signups are currently disabled. Please contact support.';
                 } else if (error.message.includes('email_not_confirmed')) {
                     alertTitle = 'Email Not Confirmed';
                     errorMessage = 'Please check your email and click the confirmation link before signing in.';
 
-                    // Show resend option for this case too
                     showStyledAlert(
                         alertTitle,
                         errorMessage + '\n\nNeed us to resend the confirmation email?',
@@ -326,8 +228,6 @@ export default function LoginScreen({ navigation }: Props) {
                             }, 500);
                         }
                     );
-                    setLoginLoading(false);
-                    isNavigating.current = false;
                     return;
                 }
 
@@ -335,21 +235,37 @@ export default function LoginScreen({ navigation }: Props) {
                 throw new Error(errorMessage);
             }
 
-            // Navigation will be handled by the auth state change listener or handlePostLoginNavigation
-            console.log('Login successful, waiting for navigation...');
+            // Login successful
+            if (data.session) {
+                const isAdmin = await verifyAdmin();
+
+                showStyledAlert(
+                    "Welcome Back! 🎉",
+                    "You've successfully logged in to your account.",
+                    () => {
+                        setStyledAlertVisible(false);
+                        setTimeout(() => {
+                            navigation.replace('Main');
+                        }, 100);
+                    }
+                );
+
+                if (isAdmin) {
+                    setTimeout(() => {
+                        showStyledAlert(
+                            'Admin Access Granted 👑',
+                            'You can access admin features from your profile.',
+                            () => setStyledAlertVisible(false)
+                        );
+                    }, 2000);
+                }
+            }
 
         } catch (error: any) {
-            isNavigating.current = false;
-            // Only show error if we haven't already shown a specific one above
-            if (!error.message?.includes('Email not confirmed') && !error.message?.includes('email_not_confirmed')) {
-                showStyledAlert(
-                    'Login Failed',
-                    error.message || 'Authentication error occurred. Please try again.'
-                );
-            }
-            console.error('Login error details:', { email, error: JSON.stringify(error, null, 2) });
+            console.error('Login error:', error);
         } finally {
             setLoginLoading(false);
+            isLoggingIn.current = false;
         }
     };
 
@@ -505,7 +421,6 @@ export default function LoginScreen({ navigation }: Props) {
     );
 }
 
-// ... keep your existing styles the same ...
 const styles = StyleSheet.create({
     scrollContainer: {
         flexGrow: 1,
@@ -627,34 +542,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontFamily: fontFamily.medium,
         marginLeft: 8,
-    },
-    googleButton: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        paddingVertical: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1.5,
-        borderColor: '#E5E7EB',
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-    },
-    googleIcon: {
-        width: 24,
-        height: 24,
-        marginRight: 12,
-    },
-    googleButtonText: {
-        fontSize: 16,
-        fontFamily: fontFamily.medium,
-        color: '#374151',
     },
     footer: {
         alignItems: 'center',

@@ -211,6 +211,10 @@ export default function MyStoresScreen() {
                                 <Text style={styles.requirementTextRequired}>Upload store picture (Required)</Text>
                             </View>
                             <View style={styles.requirementItem}>
+                                <Ionicons name="image" size={18} color="#ef4444" />
+                                <Text style={styles.requirementTextRequired}>Upload business permit (Required)</Text>
+                            </View>
+                            <View style={styles.requirementItem}>
                                 <Ionicons name="information-circle-outline" size={18} color="#64748b" />
                                 <Text style={styles.requirementText}>Complete store details</Text>
                             </View>

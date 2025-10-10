@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, Platform, RefreshControl } from 'react-native';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AdminStackParamList } from '../../types/navigation';
@@ -17,12 +17,11 @@ export default function AdminDashboardScreen({ navigation }: AdminDashboardScree
         pendingApprovals: 0,
         activeStores: 0
     });
+    const [refreshing, setRefreshing] = useState(false);
+    const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
-    useEffect(() => {
-        fetchDashboardStats();
-    }, []);
-
-    const fetchDashboardStats = async () => {
+    // Fetch dashboard stats
+    const fetchDashboardStats = useCallback(async () => {
         try {
             // Get total stores
             const { count: totalStores } = await supabase
@@ -46,19 +45,80 @@ export default function AdminDashboardScreen({ navigation }: AdminDashboardScree
                 pendingApprovals: pendingApprovals || 0,
                 activeStores: activeStores || 0
             });
+            setLastUpdated(new Date());
         } catch (error) {
             console.error('Error fetching dashboard stats:', error);
         }
+    }, []);
+
+    // Manual refresh function
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await fetchDashboardStats();
+        setRefreshing(false);
+    }, [fetchDashboardStats]);
+
+    // Auto-refresh setup
+    useEffect(() => {
+        // Initial fetch
+        fetchDashboardStats();
+
+        // Set up auto-refresh interval (every 30 seconds)
+        const intervalId = setInterval(() => {
+            fetchDashboardStats();
+        }, 30000);
+
+        // Set up real-time subscription for stores table changes
+        const subscription = supabase
+            .channel('stores-changes')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
+                    schema: 'public',
+                    table: 'stores'
+                },
+                () => {
+                    // Refresh stats when any change occurs in stores table
+                    fetchDashboardStats();
+                }
+            )
+            .subscribe();
+
+        // Cleanup function
+        return () => {
+            clearInterval(intervalId);
+            subscription.unsubscribe();
+        };
+    }, [fetchDashboardStats]);
+
+    // Format last updated time
+    const formatLastUpdated = () => {
+        return lastUpdated.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
     };
 
     return (
-        <ScrollView style={styles.scrollView}>
+        <ScrollView
+            style={styles.scrollView}
+            refreshControl={
+                <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={onRefresh}
+                    colors={['#4F46E5']}
+                    tintColor="#4F46E5"
+                />
+            }
+        >
             <LinearGradient
                 colors={['#4F46E5', '#7C3AED']}
                 style={styles.headerGradient}
             >
                 <View style={styles.headerTop}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         onPress={() => navigation.goBack()}
                         style={styles.backButton}
                     >
@@ -67,6 +127,9 @@ export default function AdminDashboardScreen({ navigation }: AdminDashboardScree
                 </View>
                 <View style={styles.header}>
                     <Text style={styles.headerTitle}>Admin Dashboard</Text>
+                    <Text style={styles.lastUpdatedText}>
+                        Last updated: {formatLastUpdated()}
+                    </Text>
                 </View>
             </LinearGradient>
 
@@ -94,6 +157,13 @@ export default function AdminDashboardScreen({ navigation }: AdminDashboardScree
                     <Text style={styles.statsNumber}>{stats.activeStores}</Text>
                     <Text style={styles.statsLabel}>Active Stores</Text>
                 </View>
+            </View>
+
+            <View style={styles.refreshInfoContainer}>
+                <Ionicons name="sync" size={16} color="#6B7280" />
+                <Text style={styles.refreshInfoText}>
+                    Auto-refreshes every 30 seconds • Pull down to refresh
+                </Text>
             </View>
 
             <View style={styles.menuContainer}>
@@ -153,6 +223,12 @@ const styles = StyleSheet.create({
         fontFamily: fontFamily.bold,
         marginBottom: 8,
     },
+    lastUpdatedText: {
+        fontSize: 14,
+        color: '#E5E7EB',
+        fontFamily: fontFamily.regular,
+        opacity: 0.9,
+    },
     statsContainer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -198,6 +274,20 @@ const styles = StyleSheet.create({
         fontFamily: fontFamily.medium,
         color: '#6B7280',
         textAlign: 'center',
+    },
+    refreshInfoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        marginTop: 8,
+    },
+    refreshInfoText: {
+        fontSize: 12,
+        fontFamily: fontFamily.medium,
+        color: '#6B7280',
+        marginLeft: 6,
     },
     menuContainer: {
         paddingHorizontal: 20,

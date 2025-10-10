@@ -10,17 +10,15 @@ import {
     TextInput,
     Modal,
     Pressable,
+    Dimensions,
+    FlatList,
 } from 'react-native';
 import { StyledAlert } from '../components/StyledAlert';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
-import type { RouteProp } from '@react-navigation/native';
-
-import { supabase } from '../../lib/supabase';
 import { decode as atob } from 'base-64';
 
 // Polyfill for base64 decoding
@@ -45,11 +43,14 @@ type Store = {
     created_at: string;
     updated_at?: string;
     image_url?: string;
+    permit_images?: string[]; // Changed to array
 };
 
 type RootStackParamList = {
     StoreDetails: { storeId: number };
 };
+
+const { width: screenWidth } = Dimensions.get('window');
 
 const StoreDetailsScreen = () => {
     const navigation = useNavigation();
@@ -58,17 +59,21 @@ const StoreDetailsScreen = () => {
     const [store, setStore] = useState<Store | null>(null);
     const [loading, setLoading] = useState(true);
     const [imageUrl, setImageUrl] = useState<string | null>(null);
+    const [permitImageUrls, setPermitImageUrls] = useState<string[]>([]); // Changed to array
     const [editModalVisible, setEditModalVisible] = useState(false);
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [editForm, setEditForm] = useState({
         name: '',
         address: '',
         description: '',
-        image: null as string | null
+        image: null as string | null,
+        permitImages: [] as string[] // Changed to array
     });
     const [alertVisible, setAlertVisible] = useState(false);
     const [alertTitle, setAlertTitle] = useState('');
     const [alertMessage, setAlertMessage] = useState('');
+    const [imageViewerVisible, setImageViewerVisible] = useState(false);
+    const [currentImage, setCurrentImage] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchStoreDetails = async () => {
@@ -80,21 +85,35 @@ const StoreDetailsScreen = () => {
                     .single();
 
                 if (error) throw error;
-                console.log('Store data received:', data);
-                console.log('Available columns:', Object.keys(data));
                 setStore(data);
                 setEditForm({
                     name: data.name,
                     address: data.address,
                     description: data.description || '',
-                    image: data.image_url || null
+                    image: data.image_url || null,
+                    permitImages: data.permit_images || []
                 });
 
                 if (data.image_url) {
                     const { data: imageData } = await supabase
                         .storage
                         .from('store-images')
-                        .getPublicUrl(data.image_url); setImageUrl(imageData.publicUrl);
+                        .getPublicUrl(data.image_url);
+                    setImageUrl(imageData.publicUrl);
+                }
+
+                // Load multiple permit images
+                if (data.permit_images && Array.isArray(data.permit_images)) {
+                    const permitUrls = await Promise.all(
+                        data.permit_images.map(async (permitPath: string) => {
+                            const { data: permitData } = await supabase
+                                .storage
+                                .from('store-images')
+                                .getPublicUrl(permitPath);
+                            return permitData.publicUrl;
+                        })
+                    );
+                    setPermitImageUrls(permitUrls);
                 }
             } catch (error) {
                 console.error(error);
@@ -106,7 +125,7 @@ const StoreDetailsScreen = () => {
         fetchStoreDetails();
     }, [storeId]);
 
-    const pickImage = async () => {
+    const pickImage = async (imageType: 'store' | 'permit') => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
         if (status !== 'granted') {
@@ -119,17 +138,33 @@ const StoreDetailsScreen = () => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: 'images',
             allowsEditing: true,
-            aspect: [4, 3], // Changed to 4:3 for better visibility
-            quality: 0.8, // Increased quality slightly
+            aspect: [4, 3],
+            quality: 0.8,
             exif: false,
-            allowsMultipleSelection: false, // Ensure single selection
+            allowsMultipleSelection: imageType === 'permit', // Allow multiple for permits
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            const uri = result.assets[0].uri;
-            setImageUrl(uri);
-            setEditForm(prev => ({ ...prev, image: uri }));
+            if (imageType === 'store') {
+                const uri = result.assets[0].uri;
+                setImageUrl(uri);
+                setEditForm(prev => ({ ...prev, image: uri }));
+            } else {
+                // Add multiple permit images
+                const newPermitUris = result.assets.map(asset => asset.uri);
+                setEditForm(prev => ({
+                    ...prev,
+                    permitImages: [...prev.permitImages, ...newPermitUris]
+                }));
+            }
         }
+    };
+
+    const removePermitImage = (index: number) => {
+        setEditForm(prev => ({
+            ...prev,
+            permitImages: prev.permitImages.filter((_, i) => i !== index)
+        }));
     };
 
     const uploadImage = async (uri: string) => {
@@ -138,14 +173,11 @@ const StoreDetailsScreen = () => {
                 throw new Error('Store ID is required for uploading images');
             }
 
-            // Compress and resize the image
             const manipulatedImage = await ImageManipulator.manipulateAsync(
                 uri,
-                [
-                    { resize: { width: 1200 } } // Increased for better quality
-                ],
+                [{ resize: { width: 1200 } }],
                 {
-                    compress: 0.8, // 80% quality
+                    compress: 0.8,
                     format: ImageManipulator.SaveFormat.JPEG,
                     base64: true
                 }
@@ -155,11 +187,9 @@ const StoreDetailsScreen = () => {
                 throw new Error('Failed to process image');
             }
 
-            // Create a unique file path
             const timestamp = Date.now().toString();
-            const fileName = `store_${store.id}_${timestamp}.jpg`;
-
-            // Convert base64 to binary data
+            const random = Math.random().toString(36).substring(7);
+            const fileName = `store_${store.id}_${timestamp}_${random}.jpg`;
             const base64Str = manipulatedImage.base64;
             const base64Data = base64Str.replace(/^data:image\/\w+;base64,/, '');
 
@@ -196,7 +226,6 @@ const StoreDetailsScreen = () => {
             return;
         }
 
-        // Validate required fields
         if (!editForm.name.trim() || !editForm.address.trim()) {
             setAlertTitle('Error');
             setAlertMessage('Store name and address are required');
@@ -209,6 +238,7 @@ const StoreDetailsScreen = () => {
             address: string;
             description: string;
             image_url?: string;
+            permit_images?: string[];
         } = {
             name: editForm.name.trim(),
             address: editForm.address.trim(),
@@ -216,32 +246,47 @@ const StoreDetailsScreen = () => {
         };
 
         try {
-            // Handle image upload if there's a new image
+            // Upload store image
             if (editForm.image && editForm.image !== store.image_url) {
-                console.log('Uploading new image...');
                 const fileName = await uploadImage(editForm.image);
-                if (!fileName) {
-                    throw new Error('Failed to get uploaded file name');
-                }
+                if (!fileName) throw new Error('Failed to get uploaded file name');
                 updatedFields.image_url = fileName;
-                console.log('Image uploaded successfully:', fileName);
             }
 
-            console.log('Updating store with fields:', updatedFields);
+            // Upload multiple permit images
+            const uploadedPermitNames: string[] = [];
+            const existingPermits = store.permit_images || [];
+
+            for (const permitUri of editForm.permitImages) {
+                // Check if it's a new image (local URI) or existing (already in database)
+                if (permitUri.startsWith('file://') || permitUri.startsWith('content://')) {
+                    const permitFileName = await uploadImage(permitUri);
+                    if (permitFileName) {
+                        uploadedPermitNames.push(permitFileName);
+                    }
+                } else {
+                    // It's an existing permit, extract the filename from the URL
+                    const existingFileName = existingPermits.find(path =>
+                        permitUri.includes(path)
+                    );
+                    if (existingFileName) {
+                        uploadedPermitNames.push(existingFileName);
+                    }
+                }
+            }
+
+            if (uploadedPermitNames.length > 0) {
+                updatedFields.permit_images = uploadedPermitNames;
+            }
+
             const { data, error } = await supabase
                 .from('stores')
                 .update(updatedFields)
                 .eq('id', store.id)
                 .select();
 
-            if (error) {
-                console.error('Store update error:', error);
-                throw error;
-            }
-
-            if (!data || data.length === 0) {
-                throw new Error('No data returned after update');
-            }
+            if (error) throw error;
+            if (!data || data.length === 0) throw new Error('No data returned after update');
 
             setStore({ ...store, ...updatedFields });
             setEditModalVisible(false);
@@ -249,18 +294,26 @@ const StoreDetailsScreen = () => {
             setAlertMessage('Store updated successfully');
             setAlertVisible(true);
 
-            // Refresh the image URL if a new image was uploaded
+            // Update image URLs
             if (updatedFields.image_url) {
                 const { data: imageData } = await supabase
                     .storage
                     .from('store-images')
                     .getPublicUrl(updatedFields.image_url);
+                if (imageData) setImageUrl(imageData.publicUrl);
+            }
 
-                if (imageData) {
-                    setImageUrl(imageData.publicUrl);
-                } else {
-                    console.error('Failed to get image URL');
-                }
+            if (updatedFields.permit_images) {
+                const permitUrls = await Promise.all(
+                    updatedFields.permit_images.map(async (permitPath) => {
+                        const { data: permitData } = await supabase
+                            .storage
+                            .from('store-images')
+                            .getPublicUrl(permitPath);
+                        return permitData.publicUrl;
+                    })
+                );
+                setPermitImageUrls(permitUrls);
             }
         } catch (err: any) {
             console.error('Store update error:', err);
@@ -271,10 +324,6 @@ const StoreDetailsScreen = () => {
     };
 
     const handleDeleteStore = async () => {
-        setAlertTitle('Delete Store');
-        setAlertMessage('Are you sure you want to delete this store? All products will also be deleted.');
-        setAlertVisible(true);
-
         try {
             const { error: storeError } = await supabase
                 .from('stores')
@@ -283,6 +332,7 @@ const StoreDetailsScreen = () => {
 
             if (storeError) throw storeError;
 
+            setDeleteModalVisible(false);
             navigation.goBack();
             setAlertTitle('Success');
             setAlertMessage('Store deleted successfully');
@@ -292,6 +342,11 @@ const StoreDetailsScreen = () => {
             setAlertMessage('Failed to delete store');
             setAlertVisible(true);
         }
+    };
+
+    const openImageViewer = (imageUri: string) => {
+        setCurrentImage(imageUri);
+        setImageViewerVisible(true);
     };
 
     if (loading) {
@@ -309,10 +364,10 @@ const StoreDetailsScreen = () => {
                 <Ionicons name="alert-circle" size={48} color="#ff7675" />
                 <Text style={styles.errorText}>Store not found</Text>
                 <TouchableOpacity
-                    style={styles.backButton}
+                    style={styles.errorBackButton}
                     onPress={() => navigation.goBack()}
                 >
-                    <Text style={styles.backButtonText}>Go Back</Text>
+                    <Text style={styles.errorBackButtonText}>Go Back</Text>
                 </TouchableOpacity>
             </View>
         );
@@ -320,62 +375,140 @@ const StoreDetailsScreen = () => {
 
     return (
         <View style={styles.container}>
-            {/* Header with back button */}
+            {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity
-                    style={styles.backButton}
+                    style={styles.headerBackButton}
                     onPress={() => navigation.goBack()}
                     activeOpacity={0.7}
                 >
-                     <Ionicons name="arrow-back" size={24} color="#fff" />
+                    <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Store Details</Text>
-                <View style={{ width: 24 }} />
+                <View style={styles.headerSpacer} />
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+            >
                 {/* Store Image */}
-                {imageUrl ? (
-                    <Image
-                        source={{ uri: imageUrl }}
-                        style={styles.storeImage}
-                        resizeMode="cover"
-                    />
-                ) : (
-                    <View style={styles.imagePlaceholder}>
-                        <Ionicons name="storefront" size={48} color="#a5b1c2" />
-                        <Text style={styles.placeholderText}>No Image Available</Text>
-                    </View>
-                )}
+                <View style={styles.imageSection}>
+                    {imageUrl ? (
+                        <TouchableOpacity
+                            style={styles.storeImageContainer}
+                            onPress={() => openImageViewer(imageUrl)}
+                            activeOpacity={0.9}
+                        >
+                            <Image
+                                source={{ uri: imageUrl }}
+                                style={styles.storeImage}
+                                resizeMode="cover"
+                            />
+                            <View style={styles.imageOverlay}>
+                                <View style={styles.imageBadge}>
+                                    <Ionicons name="expand" size={14} color="#fff" />
+                                    <Text style={styles.imageBadgeText}>Tap to enlarge</Text>
+                                </View>
+                            </View>
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.imagePlaceholder}>
+                            <View style={styles.placeholderContent}>
+                                <Ionicons name="storefront" size={60} color="#b2bec3" />
+                                <Text style={styles.placeholderText}>No Store Image</Text>
+                                <Text style={styles.placeholderSubtext}>Add a photo in edit mode</Text>
+                            </View>
+                        </View>
+                    )}
+                </View>
 
-                {/* Store Info */}
+                {/* Content Container */}
                 <View style={styles.contentContainer}>
-                    <Text style={styles.storeName}>{store.name}</Text>
-
-                    <View style={styles.divider} />
+                    {/* Store Name */}
+                    <View style={styles.nameSection}>
+                        <Text style={styles.storeName}>{store.name}</Text>
+                        <View style={styles.statusBadge}>
+                            <View style={[styles.statusDot, store.status === 'active' && styles.statusDotActive]} />
+                            <Text style={styles.statusText}>{store.status || 'Pending'}</Text>
+                        </View>
+                    </View>
 
                     {/* Address Section */}
-                    <View style={styles.section}>
-                        <View style={styles.sectionHeader}>
-                            <Ionicons name="location-sharp" size={20} color="#6c5ce7" />
-                            <Text style={styles.sectionTitle}>Address</Text>
+                    <View style={styles.infoCard}>
+                        <View style={styles.infoHeader}>
+                            <View style={styles.iconCircle}>
+                                <Ionicons name="location" size={18} color="#6c5ce7" />
+                            </View>
+                            <Text style={styles.infoTitle}>Address</Text>
                         </View>
-                        <Text style={styles.sectionContent}>{store.address}</Text>
+                        <Text style={styles.infoContent}>{store.address}</Text>
                     </View>
 
                     {/* Description Section */}
                     {store.description && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="information-circle" size={20} color="#6c5ce7" />
-                                <Text style={styles.sectionTitle}>About</Text>
+                        <View style={styles.infoCard}>
+                            <View style={styles.infoHeader}>
+                                <View style={styles.iconCircle}>
+                                    <Ionicons name="information-circle" size={18} color="#6c5ce7" />
+                                </View>
+                                <Text style={styles.infoTitle}>About</Text>
                             </View>
-                            <Text style={styles.sectionContent}>{store.description}</Text>
+                            <Text style={styles.infoContent}>{store.description}</Text>
                         </View>
                     )}
 
-                    {/* Edit/Delete Buttons */}
-                    <View style={styles.actionButtons}>
+                    {/* Business Permits Section - Multiple Images */}
+                    <View style={styles.infoCard}>
+                        <View style={styles.infoHeader}>
+                            <View style={styles.iconCircle}>
+                                <Ionicons name="document-text" size={18} color="#6c5ce7" />
+                            </View>
+                            <Text style={styles.infoTitle}>Business Permits</Text>
+                            {permitImageUrls.length > 0 && (
+                                <View style={styles.permitCount}>
+                                    <Text style={styles.permitCountText}>{permitImageUrls.length}</Text>
+                                </View>
+                            )}
+                        </View>
+                        {permitImageUrls.length > 0 ? (
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                style={styles.permitScrollView}
+                            >
+                                {permitImageUrls.map((url, index) => (
+                                    <TouchableOpacity
+                                        key={index}
+                                        style={styles.permitPreviewItem}
+                                        onPress={() => openImageViewer(url)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Image
+                                            source={{ uri: url }}
+                                            style={styles.permitImageThumbnail}
+                                            resizeMode="cover"
+                                        />
+                                        <View style={styles.permitOverlay}>
+                                            <Ionicons name="eye" size={20} color="#fff" />
+                                        </View>
+                                        <View style={styles.permitNumber}>
+                                            <Text style={styles.permitNumberText}>{index + 1}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        ) : (
+                            <View style={styles.noPermitBox}>
+                                <Ionicons name="document-outline" size={40} color="#b2bec3" />
+                                <Text style={styles.noPermitText}>No permits uploaded</Text>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Action Buttons */}
+                    <View style={styles.actionSection}>
                         <TouchableOpacity
                             style={[styles.actionButton, styles.editButton]}
                             onPress={() => setEditModalVisible(true)}
@@ -390,13 +523,37 @@ const StoreDetailsScreen = () => {
                             activeOpacity={0.8}
                         >
                             <Ionicons name="trash-outline" size={20} color="#fff" />
-                            <Text style={styles.actionButtonText}>Delete Store</Text>
+                            <Text style={styles.actionButtonText}>Delete</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </ScrollView>
 
-            {/* Edit Store Modal */}
+            {/* Image Viewer Modal */}
+            <Modal
+                visible={imageViewerVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setImageViewerVisible(false)}
+            >
+                <View style={styles.imageViewerContainer}>
+                    <TouchableOpacity
+                        style={styles.imageViewerClose}
+                        onPress={() => setImageViewerVisible(false)}
+                    >
+                        <Ionicons name="close" size={28} color="#fff" />
+                    </TouchableOpacity>
+                    {currentImage && (
+                        <Image
+                            source={{ uri: currentImage }}
+                            style={styles.fullScreenImage}
+                            resizeMode="contain"
+                        />
+                    )}
+                </View>
+            </Modal>
+
+            {/* Edit Modal */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -407,37 +564,47 @@ const StoreDetailsScreen = () => {
                     <View style={styles.modalContainer}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Edit Store</Text>
-                            <TouchableOpacity onPress={() => setEditModalVisible(false)}>
+                            <TouchableOpacity
+                                onPress={() => setEditModalVisible(false)}
+                                style={styles.modalClose}
+                            >
                                 <Ionicons name="close" size={24} color="#636e72" />
                             </TouchableOpacity>
                         </View>
 
-                        <ScrollView contentContainerStyle={styles.modalContent}>
-                            <View style={styles.inputContainer}>
+                        <ScrollView
+                            style={styles.modalScroll}
+                            contentContainerStyle={styles.modalScrollContent}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            <View style={styles.inputGroup}>
                                 <Text style={styles.inputLabel}>Store Name *</Text>
                                 <TextInput
                                     style={styles.input}
                                     placeholder="Enter store name"
+                                    placeholderTextColor="#b2bec3"
                                     value={editForm.name}
                                     onChangeText={(text) => setEditForm({ ...editForm, name: text })}
                                 />
                             </View>
 
-                            <View style={styles.inputContainer}>
+                            <View style={styles.inputGroup}>
                                 <Text style={styles.inputLabel}>Address *</Text>
                                 <TextInput
                                     style={styles.input}
                                     placeholder="Enter store address"
+                                    placeholderTextColor="#b2bec3"
                                     value={editForm.address}
                                     onChangeText={(text) => setEditForm({ ...editForm, address: text })}
                                 />
                             </View>
 
-                            <View style={styles.inputContainer}>
+                            <View style={styles.inputGroup}>
                                 <Text style={styles.inputLabel}>Description</Text>
                                 <TextInput
                                     style={[styles.input, styles.textArea]}
                                     placeholder="Enter store description"
+                                    placeholderTextColor="#b2bec3"
                                     value={editForm.description}
                                     onChangeText={(text) => setEditForm({ ...editForm, description: text })}
                                     multiline
@@ -445,30 +612,71 @@ const StoreDetailsScreen = () => {
                                 />
                             </View>
 
-                            <View style={styles.inputContainer}>
-                                <Text style={styles.inputLabel}>Store Image *</Text>
-                                <Text style={styles.inputHint}>
-                                    Upload a clear photo of your store for admin approval
-                                </Text>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>Store Image</Text>
                                 <TouchableOpacity
                                     style={styles.imagePickerButton}
-                                    onPress={pickImage}
+                                    onPress={() => pickImage('store')}
                                 >
-                                    <Ionicons name="camera" size={24} color="#6c5ce7" />
+                                    <Ionicons name="camera" size={22} color="#6c5ce7" />
                                     <Text style={styles.imagePickerText}>
                                         {editForm.image ? 'Change Image' : 'Upload Image'}
                                     </Text>
                                 </TouchableOpacity>
                                 {editForm.image && (
-                                    <View style={styles.imagePreviewContainer}>
+                                    <View style={styles.imagePreviewBox}>
                                         <Image
                                             source={{ uri: editForm.image }}
                                             style={styles.imagePreview}
                                             resizeMode="cover"
                                         />
-                                        <View style={styles.imageCheckmark}>
-                                            <Ionicons name="checkmark-circle" size={32} color="#00b894" />
+                                        <View style={styles.imageCheck}>
+                                            <Ionicons name="checkmark-circle" size={28} color="#00b894" />
                                         </View>
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <View style={styles.permitHeader}>
+                                    <Text style={styles.inputLabel}>Business Permits</Text>
+                                    {editForm.permitImages.length > 0 && (
+                                        <View style={styles.permitCountBadge}>
+                                            <Text style={styles.permitCountBadgeText}>
+                                                {editForm.permitImages.length}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                                <TouchableOpacity
+                                    style={styles.imagePickerButton}
+                                    onPress={() => pickImage('permit')}
+                                >
+                                    <Ionicons name="document" size={22} color="#6c5ce7" />
+                                    <Text style={styles.imagePickerText}>
+                                        {editForm.permitImages.length > 0 ? 'Add More Permits' : 'Upload Permits'}
+                                    </Text>
+                                </TouchableOpacity>
+                                {editForm.permitImages.length > 0 && (
+                                    <View style={styles.permitImagesGrid}>
+                                        {editForm.permitImages.map((uri, index) => (
+                                            <View key={index} style={styles.permitGridItem}>
+                                                <Image
+                                                    source={{ uri }}
+                                                    style={styles.permitGridImage}
+                                                    resizeMode="cover"
+                                                />
+                                                <TouchableOpacity
+                                                    style={styles.removePermitButton}
+                                                    onPress={() => removePermitImage(index)}
+                                                >
+                                                    <Ionicons name="close-circle" size={24} color="#ff7675" />
+                                                </TouchableOpacity>
+                                                <View style={styles.permitIndexBadge}>
+                                                    <Text style={styles.permitIndexText}>{index + 1}</Text>
+                                                </View>
+                                            </View>
+                                        ))}
                                     </View>
                                 )}
                             </View>
@@ -482,8 +690,11 @@ const StoreDetailsScreen = () => {
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </Pressable>
                             <Pressable
-                                style={[styles.modalButton, styles.saveButton,
-                                (!editForm.name || !editForm.address) && styles.disabledButton]}
+                                style={[
+                                    styles.modalButton,
+                                    styles.saveButton,
+                                    (!editForm.name || !editForm.address) && styles.disabledButton
+                                ]}
                                 onPress={handleUpdateStore}
                                 disabled={!editForm.name || !editForm.address}
                             >
@@ -494,7 +705,7 @@ const StoreDetailsScreen = () => {
                 </View>
             </Modal>
 
-            {/* Delete Store Modal */}
+            {/* Delete Confirmation Modal */}
             <Modal
                 animationType="fade"
                 transparent={true}
@@ -502,14 +713,14 @@ const StoreDetailsScreen = () => {
                 onRequestClose={() => setDeleteModalVisible(false)}
             >
                 <View style={styles.modalOverlay}>
-                    <View style={[styles.modalContainer, { width: '90%' }]}>
+                    <View style={styles.deleteModalContainer}>
                         <View style={styles.deleteModalContent}>
-                            <View style={styles.deleteIconContainer}>
+                            <View style={styles.deleteIconBox}>
                                 <Ionicons name="warning" size={48} color="#ff7675" />
                             </View>
-                            <Text style={styles.deleteModalTitle}>Delete Store</Text>
+                            <Text style={styles.deleteModalTitle}>Delete Store?</Text>
                             <Text style={styles.deleteModalText}>
-                                Are you sure you want to delete this store? This action cannot be undone.
+                                This action cannot be undone. All products and data associated with this store will be permanently deleted.
                             </Text>
                         </View>
 
@@ -521,7 +732,7 @@ const StoreDetailsScreen = () => {
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </Pressable>
                             <Pressable
-                                style={[styles.modalButton, styles.deleteModalButton]}
+                                style={[styles.modalButton, styles.confirmDeleteButton]}
                                 onPress={handleDeleteStore}
                             >
                                 <Text style={styles.deleteButtonText}>Delete</Text>
@@ -544,27 +755,25 @@ const StoreDetailsScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f6fa',
-    },
-    scrollContent: {
-        paddingBottom: 20,
+        backgroundColor: '#f8f9fa',
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f5f6fa',
+        backgroundColor: '#f8f9fa',
     },
     loadingText: {
         marginTop: 16,
         fontSize: 16,
         color: '#636e72',
+        fontWeight: '500',
     },
     errorContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f5f6fa',
+        backgroundColor: '#f8f9fa',
         padding: 20,
     },
     errorText: {
@@ -574,123 +783,320 @@ const styles = StyleSheet.create({
         marginTop: 16,
         marginBottom: 24,
     },
-    backButton: {
-        padding: 5,
-        marginTop: 10,
+    errorBackButton: {
+        backgroundColor: '#6c5ce7',
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 8,
     },
-    backButtonText: {
-        color: '#6c5ce7',
+    errorBackButtonText: {
+        color: '#fff',
         fontSize: 16,
         fontWeight: '600',
     },
+
+    // Header
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: 25,
+        paddingHorizontal: 16,
+        paddingTop: 50,
+        paddingBottom: 16,
         backgroundColor: '#6c5ce7',
         elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    headerBackButton: {
+        padding: 8,
     },
     headerTitle: {
-        fontSize: 25,
-        fontWeight: 'bold',
+        fontSize: 20,
+        fontWeight: '700',
         color: '#fff',
-        marginTop: 10,
+    },
+    headerSpacer: {
+        width: 40,
+    },
+
+    // ScrollView
+    scrollView: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingBottom: 24,
+    },
+
+    // Image Section
+    imageSection: {
+        backgroundColor: '#fff',
+    },
+    storeImageContainer: {
+        width: '100%',
+        height: 280,
+        position: 'relative',
     },
     storeImage: {
         width: '100%',
-        height: 270,
+        height: '100%',
+    },
+    imageOverlay: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+    },
+    imageBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+    },
+    imageBadgeText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 4,
     },
     imagePlaceholder: {
         width: '100%',
-        height: 220,
-        backgroundColor: '#dfe6e9',
+        height: 200,
+        backgroundColor: '#e9ecef',
         justifyContent: 'center',
+        alignItems: 'center',
+    },
+    placeholderContent: {
         alignItems: 'center',
     },
     placeholderText: {
-        marginTop: 8,
+        fontSize: 16,
+        fontWeight: '600',
         color: '#636e72',
-        fontSize: 14,
+        marginTop: 12,
     },
+    placeholderSubtext: {
+        fontSize: 14,
+        color: '#b2bec3',
+        marginTop: 4,
+    },
+
+    // Content Container
     contentContainer: {
         padding: 20,
         backgroundColor: '#fff',
-        marginTop: -20,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        elevation: 2,
+    },
+
+    // Name Section
+    nameSection: {
+        marginBottom: 20,
+        paddingBottom: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e9ecef',
     },
     storeName: {
-        fontSize: 24,
-        fontWeight: 'bold',
+        fontSize: 26,
+        fontWeight: '700',
         color: '#2d3436',
         marginBottom: 8,
     },
-    divider: {
-        height: 1,
-        backgroundColor: '#dfe6e9',
-        marginVertical: 16,
-    },
-    section: {
-        marginBottom: 24,
-    },
-    sectionHeader: {
+    statusBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
+        alignSelf: 'flex-start',
+        backgroundColor: '#f8f9fa',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
     },
-    sectionTitle: {
-        fontSize: 16,
+    statusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#b2bec3',
+        marginRight: 6,
+    },
+    statusDotActive: {
+        backgroundColor: '#00b894',
+    },
+    statusText: {
+        fontSize: 13,
         fontWeight: '600',
-        color: '#2d3436',
-        marginLeft: 8,
+        color: '#636e72',
+        textTransform: 'capitalize',
     },
-    sectionContent: {
+
+    // Info Cards
+    infoCard: {
+        marginBottom: 16,
+        padding: 16,
+        backgroundColor: '#f8f9fa',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e9ecef',
+    },
+    infoHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    iconCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#fff',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    infoTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#2d3436',
+    },
+    infoContent: {
         fontSize: 15,
         color: '#636e72',
         lineHeight: 22,
-        marginLeft: 28,
     },
-    actionButtons: {
+
+    // Permit Section - Multiple Images
+    permitCount: {
+        marginLeft: 'auto',
+        backgroundColor: '#6c5ce7',
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+    },
+    permitCountText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    permitScrollView: {
+        marginTop: 12,
+    },
+    permitPreviewItem: {
+        marginRight: 12,
+        borderRadius: 8,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    permitImageThumbnail: {
+        width: 140,
+        height: 180,
+    },
+    permitOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    permitNumber: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        backgroundColor: '#6c5ce7',
+        borderRadius: 12,
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    permitNumberText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    noPermitBox: {
+        marginTop: 12,
+        padding: 24,
+        backgroundColor: '#fff',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#dfe6e9',
+        borderStyle: 'dashed',
+        alignItems: 'center',
+    },
+    noPermitText: {
+        fontSize: 14,
+        color: '#b2bec3',
+        marginTop: 8,
+    },
+
+    // Action Section
+    actionSection: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        gap: 12,
         marginTop: 24,
     },
     actionButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 14,
-        borderRadius: 12,
         flex: 1,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 14,
+        borderRadius: 10,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
     },
     editButton: {
-        backgroundColor: '#00b894',
-        marginRight: 12,
+        backgroundColor: '#6c5ce7',
     },
     deleteButton: {
         backgroundColor: '#ff7675',
     },
     actionButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
         color: '#fff',
-        marginLeft: 8,
+        fontSize: 15,
+        fontWeight: '700',
+        marginLeft: 6,
     },
-    modalOverlay: {
+
+    // Image Viewer Modal
+    imageViewerContainer: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(0,0,0,0.95)',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    imageViewerClose: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 10,
+        padding: 8,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 20,
+    },
+    fullScreenImage: {
+        width: screenWidth,
+        height: '80%',
+    },
+
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
     },
     modalContainer: {
         width: '90%',
         maxHeight: '85%',
-        backgroundColor: 'white',
+        backgroundColor: '#fff',
         borderRadius: 16,
         overflow: 'hidden',
-        elevation: 10,
     },
     modalHeader: {
         flexDirection: 'row',
@@ -698,145 +1104,222 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: 20,
         borderBottomWidth: 1,
-        borderBottomColor: '#dfe6e9',
-        backgroundColor: '#f5f6fa',
+        borderBottomColor: '#e9ecef',
     },
     modalTitle: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontWeight: '700',
         color: '#2d3436',
     },
-    modalContent: {
+    modalClose: {
+        padding: 4,
+    },
+    modalScroll: {
+        maxHeight: 400,
+    },
+    modalScrollContent: {
         padding: 20,
     },
-    modalFooter: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        padding: 16,
-        borderTopWidth: 1,
-        borderTopColor: '#dfe6e9',
-        backgroundColor: '#f5f6fa',
-    },
-    inputContainer: {
+
+    // Input Styles
+    inputGroup: {
         marginBottom: 20,
     },
     inputLabel: {
         fontSize: 14,
         fontWeight: '600',
         color: '#2d3436',
-        marginBottom: 6,
-    },
-    inputHint: {
-        fontSize: 12,
-        color: '#636e72',
-        marginBottom: 10,
-        fontStyle: 'italic',
+        marginBottom: 8,
     },
     input: {
-        backgroundColor: '#fff',
-        borderRadius: 10,
-        padding: 14,
-        fontSize: 16,
-        color: '#2d3436',
+        backgroundColor: '#f8f9fa',
         borderWidth: 1,
         borderColor: '#dfe6e9',
+        borderRadius: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        fontSize: 15,
+        color: '#2d3436',
     },
     textArea: {
         height: 100,
         textAlignVertical: 'top',
+        paddingTop: 12,
+    },
+
+    // Image Picker
+    imagePickerButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8f9fa',
+        borderWidth: 1,
+        borderColor: '#6c5ce7',
+        borderRadius: 10,
+        paddingVertical: 14,
+        borderStyle: 'dashed',
+    },
+    imagePickerText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#6c5ce7',
+        marginLeft: 8,
+    },
+    imagePreviewBox: {
+        marginTop: 12,
+        borderRadius: 8,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    imagePreview: {
+        width: '100%',
+        height: 140,
+    },
+    imageCheck: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        backgroundColor: '#fff',
+        borderRadius: 14,
+    },
+
+    // Permit Images Grid
+    permitHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    permitCountBadge: {
+        marginLeft: 8,
+        backgroundColor: '#6c5ce7',
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+    },
+    permitCountBadgeText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    permitImagesGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 12,
+        gap: 8,
+    },
+    permitGridItem: {
+        width: '48%',
+        aspectRatio: 3 / 4,
+        borderRadius: 8,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    permitGridImage: {
+        width: '100%',
+        height: '100%',
+    },
+    removePermitButton: {
+        position: 'absolute',
+        top: 4,
+        right: 4,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+    },
+    permitIndexBadge: {
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        backgroundColor: 'rgba(108, 92, 231, 0.9)',
+        borderRadius: 12,
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    permitIndexText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+
+    // Modal Footer
+    modalFooter: {
+        flexDirection: 'row',
+        gap: 12,
+        padding: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#e9ecef',
     },
     modalButton: {
-        borderRadius: 10,
-        paddingVertical: 12,
-        paddingHorizontal: 24,
         flex: 1,
-        marginHorizontal: 6,
+        paddingVertical: 14,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     cancelButton: {
-        backgroundColor: '#dfe6e9',
+        backgroundColor: '#f8f9fa',
+        borderWidth: 1,
+        borderColor: '#dfe6e9',
     },
     cancelButtonText: {
-        color: '#2d3436',
+        fontSize: 15,
         fontWeight: '700',
-        fontSize: 16,
-        textAlign: 'center',
-        marginTop: 8,
+        color: '#636e72',
     },
     saveButton: {
         backgroundColor: '#6c5ce7',
     },
     saveButtonText: {
+        fontSize: 15,
+        fontWeight: '700',
         color: '#fff',
-        fontWeight: '600',
-        fontSize: 16,
-        textAlign: 'center',
     },
     disabledButton: {
-        opacity: 0.5,
+        backgroundColor: '#b2bec3',
+        opacity: 0.6,
+    },
+
+    // Delete Modal
+    deleteModalContainer: {
+        width: '85%',
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        overflow: 'hidden',
     },
     deleteModalContent: {
         padding: 24,
         alignItems: 'center',
     },
-    deleteIconContainer: {
+    deleteIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#fff5f5',
+        justifyContent: 'center',
+        alignItems: 'center',
         marginBottom: 16,
     },
     deleteModalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
+        fontSize: 22,
+        fontWeight: '700',
         color: '#2d3436',
-        marginBottom: 8,
+        marginBottom: 12,
     },
     deleteModalText: {
-        fontSize: 16,
+        fontSize: 15,
         color: '#636e72',
         textAlign: 'center',
-        lineHeight: 24,
+        lineHeight: 22,
     },
-    deleteModalButton: {
+    confirmDeleteButton: {
         backgroundColor: '#ff7675',
     },
     deleteButtonText: {
+        fontSize: 15,
+        fontWeight: '700',
         color: '#fff',
-        fontWeight: '600',
-        fontSize: 16,
-        textAlign: 'center',
     },
-    imagePickerButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#f5f6fa',
-        padding: 16,
-        borderRadius: 10,
-        borderWidth: 2,
-        borderColor: '#6c5ce7',
-        borderStyle: 'dashed',
-    },
-    imagePickerText: {
-        marginLeft: 10,
-        fontSize: 16,
-        color: '#6c5ce7',
-        fontWeight: '600',
-    },
-    imagePreviewContainer: {
-        marginTop: 16,
-        position: 'relative',
-    },
-    imagePreview: {
-        width: '100%',
-        height: 200,
-        borderRadius: 10,
-        borderWidth: 2,
-        borderColor: '#00b894',
-    },
-    imageCheckmark: {
-        position: 'absolute',
-        top: 10,
-        right: 10,
-        backgroundColor: 'white',
-        borderRadius: 16,
-    },
-})
+});
 
 export default StoreDetailsScreen;

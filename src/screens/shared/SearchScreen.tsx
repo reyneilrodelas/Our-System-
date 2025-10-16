@@ -24,9 +24,11 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MaterialIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import * as Location from 'expo-location';
 
 const { width, height } = Dimensions.get('window');
 import { supabase } from '../../lib/supabase';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
 
 type RootStackParamList = {
     ResultScreen: { productData: any; storesData: any[]; loadingStores: boolean };
@@ -161,14 +163,21 @@ export default function SearchScreen() {
 
     const loadRecentSearches = async () => {
         try {
-            const { data: recent, error } = await supabase
+            const cacheKey = 'recent_products_5';
+            const cached = await getCacheData<Product[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+            if (cached) {
+                setRecentSearches(cached);
+            }
+
+            const { data: recent } = await supabase
                 .from('products')
                 .select('*')
                 .order('created_at', { ascending: false })
                 .limit(5);
 
-            if (!error && recent) {
+            if (recent) {
                 setRecentSearches(recent);
+                await setCacheData(cacheKey, recent);
             }
         } catch (error) {
             console.error('Failed to load recent searches:', error);
@@ -177,15 +186,24 @@ export default function SearchScreen() {
 
     const fetchSuggestions = async () => {
         try {
-            const { data, error } = await supabase
+            const cacheKey = `suggestions_${searchQuery}_5`;
+            const cached = await getCacheData<Product[]>(cacheKey, CACHE_DURATIONS.SHORT);
+            if (cached) {
+                setSuggestions(cached);
+                setShowSuggestions(cached.length > 0);
+                return;
+            }
+
+            const { data } = await supabase
                 .from('products')
                 .select('*')
                 .or(`name.ilike.%${searchQuery}%,brand.ilike.%${searchQuery}%`)
                 .limit(5);
 
-            if (!error && data) {
+            if (data) {
                 setSuggestions(data);
                 setShowSuggestions(data.length > 0);
+                await setCacheData(cacheKey, data);
             }
         } catch (error) {
             console.error('Failed to fetch suggestions:', error);
@@ -210,6 +228,19 @@ export default function SearchScreen() {
         Keyboard.dismiss();
 
         try {
+            const cacheKey = `search_${trimmedQuery}_20`;
+            
+            // Check cache first
+            const cached = await getCacheData<Product[]>(cacheKey, CACHE_DURATIONS.SHORT);
+            if (cached && cached.length > 0) {
+                setSearchResults(cached);
+                setSearchMode('results');
+                setSearchHistory(prev => [trimmedQuery, ...prev.filter(h => h !== trimmedQuery)].slice(0, 5));
+                setIsLoading(false);
+                return;
+            }
+
+            // Query database
             const { data, error } = await supabase
                 .from('products')
                 .select('*')
@@ -221,15 +252,15 @@ export default function SearchScreen() {
                 setAlertMessage('No products found. Please try a different search term.');
                 setAlertVisible(true);
                 setSearchMode('idle');
+                setIsLoading(false);
                 return;
             }
 
-            if (data) {
-                setSearchResults(data);
-                setSearchMode('results');
-                // Add to search history
-                setSearchHistory(prev => [trimmedQuery, ...prev.filter(h => h !== trimmedQuery)].slice(0, 5));
-            }
+            // Cache and display results
+            await setCacheData(cacheKey, data);
+            setSearchResults(data);
+            setSearchMode('results');
+            setSearchHistory(prev => [trimmedQuery, ...prev.filter(h => h !== trimmedQuery)].slice(0, 5));
         } catch (error) {
             console.error('Search error:', error);
             setAlertTitle('Error');
@@ -259,6 +290,21 @@ export default function SearchScreen() {
                 // Check if we have cached stores
                 const cachedStores = storesCache[product.id];
 
+                // Start fetching location in parallel (don't wait)
+                Location.requestForegroundPermissionsAsync()
+                    .then(({ status }) => {
+                        if (status === 'granted') {
+                            return Location.getCurrentPositionAsync({
+                                accuracy: Location.Accuracy.Balanced,
+                            });
+                        }
+                        return null;
+                    })
+                    .catch((error) => {
+                        console.warn('Location fetch in background:', error);
+                        return null;
+                    });
+
                 // Navigate immediately with cached data or empty array
                 navigation.navigate('ResultScreen', {
                     productData: minimalProductData,
@@ -268,6 +314,19 @@ export default function SearchScreen() {
 
                 // If no cached data, fetch fresh data in the background
                 if (!cachedStores) {
+                    const cacheKey = `stores_${product.barcode}_20`;
+                    
+                    // Try cache first
+                    const cached = await getCacheData<any[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+                    if (cached) {
+                        setStoresCache(prev => ({
+                            ...prev,
+                            [product.id]: cached
+                        }));
+                        return;
+                    }
+
+                    // Fetch from database
                     const { data: stores } = await supabase
                         .from('store_products')
                         .select(`
@@ -288,11 +347,13 @@ export default function SearchScreen() {
                         .eq('stores.status', 'approved')
                         .limit(20);
 
-                    // Cache the result for future use
-                    setStoresCache(prev => ({
-                        ...prev,
-                        [product.id]: stores || []
-                    }));
+                    if (stores) {
+                        await setCacheData(cacheKey, stores);
+                        setStoresCache(prev => ({
+                            ...prev,
+                            [product.id]: stores || []
+                        }));
+                    }
                 }
             } catch (error) {
                 console.error('Navigation error:', error);
@@ -389,13 +450,11 @@ export default function SearchScreen() {
                             {item.description}
                         </Text>
                     )}
-                   
+
                     <View style={styles.productItemBarcodeContainer}>
                         <MaterialIcons name="qr-code" size={12} color="#6B7280" />
                         <Text style={styles.productItemBarcode}>{item.barcode}</Text>
                     </View>
-
-                   
                 </View>
 
                 <View style={styles.productItemArrow}>

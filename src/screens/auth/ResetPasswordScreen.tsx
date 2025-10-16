@@ -34,13 +34,18 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+    // Recovery flow state
+    const [isRecoveryFlow, setIsRecoveryFlow] = useState(false);
+    const recoveryToken = route.params?.token;
+    const recoveryType = route.params?.type;
+
     // Check for valid auth session on component mount
     useEffect(() => {
         checkAuthSession();
 
         // Listen for auth state changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (!session) {
+            if (!session && !isRecoveryFlow) {
                 navigation.replace('Login');
             } else if (event === 'TOKEN_REFRESHED') {
                 setCheckingSession(false);
@@ -54,6 +59,13 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
     const checkAuthSession = async () => {
         try {
+            // Check if this is a recovery flow (from password reset email link)
+            if (recoveryToken && recoveryType === 'recovery') {
+                setIsRecoveryFlow(true);
+                setCheckingSession(false);
+                return;
+            }
+
             // First check if there's an active session
             const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
@@ -155,7 +167,84 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
         }
     };
 
+    const handleResetPasswordRecovery = async () => {
+        // For recovery flow, only ask for new password
+        if (!newPassword.trim() || !confirmPassword.trim()) {
+            showStyledAlert('Error', 'Please fill in all fields');
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            showStyledAlert('Error', 'Passwords do not match');
+            return;
+        }
+
+        // Validate password strength
+        const validation = validatePassword(newPassword);
+        if (!validation.isValid) {
+            showStyledAlert('Error', validation.error || 'Invalid password');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            if (!recoveryToken) {
+                throw new Error('No recovery token provided. Please request a new password reset link.');
+            }
+
+            // Verify the recovery token with Supabase
+            const { data, error: verifyError } = await supabase.auth.verifyOtp({
+                token_hash: recoveryToken,
+                type: 'recovery',
+            });
+
+            if (verifyError) {
+                throw new Error('Invalid or expired recovery token. Please request a new password reset link.');
+            }
+
+            // Token verified, now update the password
+            const { error: updateError } = await supabase.auth.updateUser({
+                password: newPassword
+            });
+
+            if (updateError) {
+                throw updateError;
+            }
+
+            // Clear form
+            setNewPassword('');
+            setConfirmPassword('');
+
+            showStyledAlert(
+                'Success',
+                'Your password has been reset successfully. Please log in with your new password.',
+                () => {
+                    // Sign out the user and clear the session
+                    supabase.auth.signOut().finally(() => {
+                        navigation.replace('Login');
+                    });
+                }
+            );
+        } catch (error: any) {
+            console.error('Password reset error:', error);
+            let errorMessage = 'Failed to reset password. Please try again.';
+
+            if (error.message) {
+                errorMessage = error.message;
+            }
+
+            showStyledAlert('Error', errorMessage);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleResetPassword = async () => {
+        // If in recovery flow, use different handler
+        if (isRecoveryFlow) {
+            return handleResetPasswordRecovery();
+        }
+
         // Validate inputs
         if (!currentPassword.trim() || !newPassword.trim() || !confirmPassword.trim()) {
             showStyledAlert('Error', 'Please fill in all fields');
@@ -274,33 +363,37 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
                 <View style={styles.content}>
                     <Text style={styles.title}>Reset Password</Text>
                     <Text style={styles.subtitle}>
-                        Please enter your current password and new password below
+                        {isRecoveryFlow 
+                            ? 'Please enter your new password below' 
+                            : 'Please enter your current password and new password below'}
                     </Text>
 
-                    <View style={styles.inputContainer}>
-                        <Text style={styles.label}>Current Password</Text>
-                        <View style={styles.passwordInputWrapper}>
-                            <TextInput
-                                style={styles.passwordInput}
-                                placeholder="Enter current password"
-                                value={currentPassword}
-                                onChangeText={setCurrentPassword}
-                                secureTextEntry={!showCurrentPassword}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                editable={!loading}
-                            />
-                            <TouchableOpacity
-                                style={styles.eyeButton}
-                                onPress={() => setShowCurrentPassword(!showCurrentPassword)}
-                                disabled={loading}
-                            >
-                                <Text style={styles.eyeIcon}>
-                                    {showCurrentPassword ? '👁️' : '👁️‍🗨️'}
-                                </Text>
-                            </TouchableOpacity>
+                    {!isRecoveryFlow && (
+                        <View style={styles.inputContainer}>
+                            <Text style={styles.label}>Current Password</Text>
+                            <View style={styles.passwordInputWrapper}>
+                                <TextInput
+                                    style={styles.passwordInput}
+                                    placeholder="Enter current password"
+                                    value={currentPassword}
+                                    onChangeText={setCurrentPassword}
+                                    secureTextEntry={!showCurrentPassword}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    editable={!loading}
+                                />
+                                <TouchableOpacity
+                                    style={styles.eyeButton}
+                                    onPress={() => setShowCurrentPassword(!showCurrentPassword)}
+                                    disabled={loading}
+                                >
+                                    <Text style={styles.eyeIcon}>
+                                        {showCurrentPassword ? '👁️' : '👁️‍🗨️'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
-                    </View>
+                    )}
 
                     <View style={styles.inputContainer}>
                         <Text style={styles.label}>New Password</Text>

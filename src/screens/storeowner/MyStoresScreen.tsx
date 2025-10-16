@@ -14,11 +14,12 @@ import {
     ScrollView
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../context/AuthContext';
 import { Ionicons, AntDesign, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
 
 const { width } = Dimensions.get('window');
 
@@ -44,7 +45,7 @@ import { supabase } from '../../lib/supabase';
 
 export default function MyStoresScreen() {
     const { user } = useAuth();
-    const navigation = useNavigation<StackNavigationProp<StoreOwnerStackParamList>>();
+    const navigation = useNavigation<NativeStackNavigationProp<StoreOwnerStackParamList>>();
 
     const [stores, setStores] = useState<Store[]>([]);
     const [loading, setLoading] = useState(true);
@@ -53,7 +54,7 @@ export default function MyStoresScreen() {
     const [scaleAnim] = useState(new Animated.Value(0.9));
     const [fadeAnim] = useState(new Animated.Value(0));
 
-    const fetchStores = async (retryCount = 0) => {
+    const fetchStores = async (retryCount = 0, isRefresh = false) => {
         if (!user) {
             setError('User not authenticated');
             setLoading(false);
@@ -61,12 +62,25 @@ export default function MyStoresScreen() {
         }
 
         try {
+            // Try cache first on non-refresh
+            if (!isRefresh) {
+                const cachedStores = await getCacheData<Store[]>(`user_stores_${user.id}`, CACHE_DURATIONS.MEDIUM);
+                if (cachedStores) {
+                    setStores(cachedStores);
+                    setLoading(false);
+                    setRefreshing(false);
+                    // Still fetch fresh data in background
+                    isRefresh = false;
+                }
+            }
+
             setLoading(true);
             setError(null);
 
+            // Fetch fresh data - only select needed fields
             const { data: storesData, error: storesError } = await supabase
                 .from('stores')
-                .select('*')
+                .select('id, name, address, status, created_at, owner_id, description')
                 .eq('owner_id', user.id)
                 .order('created_at', { ascending: false });
 
@@ -80,6 +94,9 @@ export default function MyStoresScreen() {
             }
 
             setStores(storesData);
+
+            // Cache the result
+            await setCacheData(`user_stores_${user.id}`, storesData);
 
             // Animate in the content
             Animated.parallel([
@@ -99,7 +116,7 @@ export default function MyStoresScreen() {
             console.error('Fetch error:', err);
 
             if (retryCount < 2) {
-                setTimeout(() => fetchStores(retryCount + 1), 1000);
+                setTimeout(() => fetchStores(retryCount + 1, isRefresh), 1000);
                 return;
             }
 

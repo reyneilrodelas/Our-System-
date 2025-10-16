@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { StackNavigationProp } from '@react-navigation/stack';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -16,7 +16,7 @@ type RootStackParamList = {
 };
 
 export default function HomeScreen() {
-    const navigation = useNavigation<StackNavigationProp<RootStackParamList, 'Home'>>();
+    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList, 'Home'>>();
     return (
         <LinearGradient
             colors={['#f8faff', '#e8f2ff', '#dce7ff', '#f0e6ff']}

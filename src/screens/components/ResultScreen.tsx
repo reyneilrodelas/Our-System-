@@ -14,13 +14,14 @@ import {
 } from 'react-native';
 import { StyledAlert } from './StyledAlert';
 import { createClient } from '@supabase/supabase-js';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import { MaterialIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
 import type { HomeStackParamList } from '../../types/navigation';
 
 import { supabase } from '../../lib/supabase';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
 
 const { width, height } = Dimensions.get('window');
 
@@ -30,7 +31,6 @@ interface Store {
     address: string;
     latitude: number;
     longitude: number;
-    status: string;
 }
 
 interface StoreProduct {
@@ -51,9 +51,9 @@ interface ProductData {
 
 export default function ResultScreen({ route }: any) {
     const navigation = useNavigation<NavigationProp<HomeStackParamList>>();
-    const { productData }: { productData: ProductData } = route.params;
+    const { productData, userLocation: initialLocation }: { productData: ProductData; userLocation?: any } = route.params;
     const [storeData, setStoreData] = useState<StoreProduct[]>([]);
-    const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(initialLocation || null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [alertVisible, setAlertVisible] = useState(false);
@@ -112,21 +112,19 @@ export default function ResultScreen({ route }: any) {
             setRefreshing(true);
             setLoading(true);
 
-            // Fetch location first to ensure we have it for sorting
-            let currentLocation = userLocation;
-            if (!currentLocation) {
-                await getLocation();
-                // Get the updated location from state after getLocation completes
-                const location = await Location.getCurrentPositionAsync({});
-                currentLocation = {
-                    latitude: location.coords.latitude,
-                    longitude: location.coords.longitude,
-                };
-                setUserLocation(currentLocation);
+            // Try cache first - show cached data immediately
+            const cacheKey = `store_products_${productData.barcode}`;
+            const cachedData = await getCacheData<StoreProduct[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+            if (cachedData && cachedData.length > 0) {
+                setStoreData(cachedData);
+                setLoading(false);
             }
 
-            // Fetch stores with the product
-            const { data, error } = await supabase
+            // Get location in parallel with store fetch (don't wait for location first)
+            let currentLocation = userLocation;
+            
+            // Fetch stores immediately (parallel)
+            const storesPromise = supabase
                 .from('store_products')
                 .select(`
                     product_barcode,
@@ -144,27 +142,79 @@ export default function ResultScreen({ route }: any) {
                 `)
                 .eq('product_barcode', productData.barcode.trim())
                 .eq('stores.status', 'approved')
-                .not('store_id', 'is', null)
-                .not('stores.id', 'is', null);
+                .limit(50);
 
-            if (error) throw error;
+            // Get location in parallel (if we don't have it)
+            const locationPromise = (async () => {
+                if (!currentLocation) {
+                    try {
+                        let { status } = await Location.requestForegroundPermissionsAsync();
+                        if (status !== 'granted') {
+                            console.warn('Location permission denied');
+                            return null;
+                        }
+                        
+                        // Set timeout for location fetch (5 seconds max)
+                        const locationPromiseWithTimeout = Promise.race([
+                            Location.getCurrentPositionAsync({
+                                accuracy: Location.Accuracy.Balanced,
+                            }),
+                            new Promise((_, reject) =>
+                                setTimeout(() => reject(new Error('Location timeout')), 5000)
+                            ),
+                        ]);
 
-            const validatedData = (data || [])
-                .map(item => {
+                        const location = await locationPromiseWithTimeout as any;
+                        const newLocation = {
+                            latitude: location.coords.latitude,
+                            longitude: location.coords.longitude,
+                        };
+                        setUserLocation(newLocation);
+                        return newLocation;
+                    } catch (error) {
+                        console.error('Location error:', error);
+                        return null;
+                    }
+                }
+                return currentLocation;
+            })();
+
+            // Wait for both in parallel
+            const [{ data: storeProducts, error }, finalLocation] = await Promise.all([
+                storesPromise,
+                locationPromise,
+            ]);
+
+            if (error) {
+                console.error('Error fetching stores:', error);
+                setStoreData([]);
+                setLoading(false);
+                setRefreshing(false);
+                return;
+            }
+
+            if (!storeProducts || storeProducts.length === 0) {
+                setStoreData([]);
+                setLoading(false);
+                setRefreshing(false);
+                return;
+            }
+
+            // Process and calculate distances
+            const validatedData = storeProducts
+                .map((item: any) => {
                     const stores = Array.isArray(item.stores) ? item.stores : [item.stores];
-                    const validStores = stores.filter(store =>
+                    const validStores = stores.filter((store: any) =>
                         store?.id &&
                         store.latitude &&
-                        store.longitude &&
-                        store.status === 'approved'
+                        store.longitude
                     );
 
-                    // Calculate distance for sorting
                     let distance = Infinity;
-                    if (currentLocation && validStores.length > 0 && validStores[0]) {
+                    if (finalLocation && validStores.length > 0 && validStores[0]) {
                         distance = getDistance(
-                            currentLocation.latitude,
-                            currentLocation.longitude,
+                            finalLocation.latitude,
+                            finalLocation.longitude,
                             validStores[0].latitude,
                             validStores[0].longitude
                         );
@@ -174,19 +224,22 @@ export default function ResultScreen({ route }: any) {
                         product_barcode: item.product_barcode,
                         price: item.price,
                         stock: item.stock,
-                        availability: item.availability !== undefined ? item.availability : (item.stock !== null && item.stock > 0),
+                        availability: item.availability,
                         stores: validStores,
                         distance: distance
                     };
                 })
-                .filter(item => item.stores.length > 0);
+                .filter((item: any) => item.stores.length > 0);
 
             // Sort by distance (nearest first)
-            const sortedData = validatedData.sort((a, b) => {
+            const sortedData = validatedData.sort((a: any, b: any) => {
                 return (a.distance || Infinity) - (b.distance || Infinity);
             });
 
             setStoreData(sortedData);
+
+            // Cache the results
+            await setCacheData(cacheKey, sortedData);
 
         } catch (error) {
             console.error('Error fetching data:', error);

@@ -15,7 +15,7 @@ import MapView, { Marker } from 'react-native-maps';
 import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
-import type { StackNavigationProp } from '@react-navigation/stack';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,7 +32,7 @@ type RootStackParamList = {
 
 export default function AddStoreScreen() {
     const { user, isLoading: authLoading } = useAuth();
-    const navigation = useNavigation<StackNavigationProp<RootStackParamList, 'MyStores'>>();
+    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList, 'MyStores'>>();
 
     const [form, setForm] = useState({
         name: '',

@@ -9,7 +9,7 @@ import {
     Easing,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,7 +28,7 @@ const { width } = Dimensions.get('window');
 const buttonWidth = width * 0.8;
 
 const MyShopScreen = () => {
-    const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
+    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
     const scaleValue = new Animated.Value(1);
     const opacityValue = new Animated.Value(0);
     const translateYValue = new Animated.Value(30);

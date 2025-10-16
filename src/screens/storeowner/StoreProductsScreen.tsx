@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { StyledAlert } from '../components/StyledAlert';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../context/AuthContext';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
@@ -49,7 +49,7 @@ import { supabase } from '../../lib/supabase';
 
 export default function StoreProductsScreen() {
     const route = useRoute<StoreProductsRouteProp>();
-    const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
+    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
     const { storeId } = route.params;
     const { user } = useAuth();
 

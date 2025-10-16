@@ -246,7 +246,7 @@ export default function App() {
     prefixes: ['scanwizard://'],
     config: {
       screens: {
-        ResetPassword: 'reset-password',
+        ResetPassword: 'reset-password/:token/:type',
         Login: 'login',
         // Add other deep link routes as needed
       },

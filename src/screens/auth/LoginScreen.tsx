@@ -85,7 +85,7 @@ export default function LoginScreen({ navigation }: Props) {
                 const type = params.get('type');
 
                 if (type === 'recovery' && token) {
-                    navigation.navigate('ResetPassword');
+                    navigation.navigate('ResetPassword', { token, type });
                 }
             }
         };

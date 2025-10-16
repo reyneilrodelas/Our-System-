@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../../lib/supabase';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
 
 interface Store {
     id: string;
@@ -23,13 +24,30 @@ export default function AdminApprovalScreen() {
 
     const fetchPendingStores = async () => {
         setRefreshing(true);
+        
+        // Try to get cached data first
+        const cachedData = await getCacheData<Store[]>('pending_stores', CACHE_DURATIONS.MEDIUM);
+        if (cachedData && !refreshing) {
+            setPendingStores(cachedData);
+            setLoading(false);
+        }
+
+        // Fetch fresh data from Supabase - only select needed fields
         const { data, error } = await supabase
             .from('stores')
-            .select('*')
-            .eq('status', 'pending');
+            .select('id, name, address, status, created_at')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
 
-        if (error) console.log(error);
-        else setPendingStores(data);
+        if (error) {
+            console.log(error);
+        } else {
+            setPendingStores(data || []);
+            // Cache the result
+            if (data) {
+                await setCacheData('pending_stores', data);
+            }
+        }
         setLoading(false);
         setRefreshing(false);
     };

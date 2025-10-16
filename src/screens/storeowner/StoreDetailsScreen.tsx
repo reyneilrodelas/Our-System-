@@ -14,7 +14,7 @@ import {
     FlatList,
 } from 'react-native';
 import { StyledAlert } from '../components/StyledAlert';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { supabase } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';

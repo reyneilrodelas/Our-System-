@@ -20,6 +20,7 @@ import { RootStackParamList } from '../../types/navigation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../../lib/supabase';
 import { emailConfig } from '../../config/emailConfig';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
 
 const { width, height } = Dimensions.get('window');
 
@@ -60,35 +61,86 @@ export default function AllStoresScreen() {
     const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
     const [selectedStore, setSelectedStore] = useState<Store | null>(null);
     const [modalVisible, setModalVisible] = useState(false);
+    const [page, setPage] = useState(0);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
 
+    const PAGE_SIZE = 20;
     const fadeAnim = new Animated.Value(0);
     const slideAnim = new Animated.Value(height);
 
     useEffect(() => {
-        fetchStores();
+        setPage(0);
+        setStores([]);
+        setHasMore(true);
+        fetchStores(true);
     }, [filter]);
 
-    const fetchStores = async () => {
-        setRefreshing(true);
-        let query = supabase
-            .from('stores')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (filter !== 'all') {
-            query = query.eq('status', filter);
-        }
-
-        const { data, error } = await query;
-
-        if (error) {
-            console.log('Error fetching stores:', error);
-            Alert.alert('Error', 'Failed to fetch stores');
+    const fetchStores = async (isRefresh = false) => {
+        if (isRefresh) {
+            setRefreshing(true);
+            setPage(0);
         } else {
-            setStores(data || []);
+            setIsLoadingMore(true);
         }
-        setLoading(false);
-        setRefreshing(false);
+
+        const currentPage = isRefresh ? 0 : page;
+        const cacheKey = `stores_${filter}_page_${currentPage}`;
+
+        // Try cache first (only on non-refresh)
+        if (!isRefresh) {
+            const cachedData = await getCacheData<Store[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+            if (cachedData) {
+                setStores(prev => isRefresh ? cachedData : [...prev, ...cachedData]);
+                if (cachedData.length < PAGE_SIZE) {
+                    setHasMore(false);
+                }
+                setIsLoadingMore(false);
+                setRefreshing(false);
+                return;
+            }
+        }
+
+        try {
+            let query = supabase
+                .from('stores')
+                .select('id, name, address, status, created_at, latitude, longitude, email, phone')
+                .order('created_at', { ascending: false })
+                .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+
+            if (filter !== 'all') {
+                query = query.eq('status', filter);
+            }
+
+            const { data, error } = await query;
+
+            if (error) {
+                console.log('Error fetching stores:', error);
+                Alert.alert('Error', 'Failed to fetch stores');
+            } else {
+                const newData = data || [];
+                setStores(prev => isRefresh ? newData : [...prev, ...newData]);
+
+                // Cache this page
+                if (newData.length > 0) {
+                    await setCacheData(cacheKey, newData);
+                }
+
+                // Check if there are more pages
+                if (newData.length < PAGE_SIZE) {
+                    setHasMore(false);
+                } else {
+                    setPage(prev => prev + 1);
+                }
+            }
+        } catch (err) {
+            console.error('Fetch error:', err);
+            Alert.alert('Error', 'Failed to fetch stores');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+            setIsLoadingMore(false);
+        }
     };
 
     const openModal = (store: Store) => {
@@ -497,7 +549,7 @@ export default function AllStoresScreen() {
                             ? 'No stores in the system'
                             : `No ${filter} stores`}
                     </Text>
-                    <TouchableOpacity onPress={fetchStores} style={styles.refreshButton}>
+                    <TouchableOpacity onPress={() => fetchStores(true)} style={styles.refreshButton}>
                         <Text style={styles.refreshText}>Refresh</Text>
                     </TouchableOpacity>
                 </View>
@@ -506,9 +558,22 @@ export default function AllStoresScreen() {
                     data={stores}
                     keyExtractor={(item) => item.id}
                     refreshing={refreshing}
-                    onRefresh={fetchStores}
+                    onRefresh={() => fetchStores(true)}
                     contentContainerStyle={styles.listContent}
                     renderItem={renderStoreItem}
+                    onEndReached={() => {
+                        if (hasMore && !isLoadingMore && !refreshing) {
+                            fetchStores(false);
+                        }
+                    }}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={
+                        isLoadingMore ? (
+                            <View style={styles.loadingFooter}>
+                                <ActivityIndicator size="small" color="#4A90E2" />
+                            </View>
+                        ) : null
+                    }
                 />
             )}
 
@@ -1007,5 +1072,9 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         marginLeft: 10,
         textTransform: 'capitalize',
+    },
+    loadingFooter: {
+        paddingVertical: 20,
+        alignItems: 'center',
     },
 });

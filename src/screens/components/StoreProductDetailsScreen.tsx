@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     },
     backButton: {
         padding: 8,
-        marginTop: 5,
+        marginTop: 15,
         marginLeft: -8,
     },
     backButtonText: {
@@ -665,7 +665,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: 10,
+        padding: 20,
         backgroundColor: '#6c5ce7',
         elevation: 4,
     },
@@ -673,7 +673,7 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         color: '#fff',
-        marginTop: 5,
+        marginTop: 15,
     },
     storeImage: {
         width: '100%',

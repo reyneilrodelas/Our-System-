@@ -801,7 +801,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: 50,
+        paddingTop: 45,
         paddingBottom: 16,
         backgroundColor: '#6c5ce7',
         elevation: 4,
@@ -916,7 +916,7 @@ const styles = StyleSheet.create({
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: '#b2bec3',
+        backgroundColor: '#097100ff',
         marginRight: 6,
     },
     statusDotActive: {

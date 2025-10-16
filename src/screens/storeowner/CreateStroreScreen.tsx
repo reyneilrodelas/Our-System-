@@ -20,11 +20,11 @@ import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import ENV from '../../config/env';
-import { emailConfig } from '../../config/emailConfig';
+import { sendAdminNotification } from '../../config/emailConfig';
+
 const supabaseUrl = ENV.SUPABASE_URL;
 const supabaseKey = ENV.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 
 type RootStackParamList = {
     MyStores: undefined;
@@ -150,7 +150,6 @@ export default function AddStoreScreen() {
         } catch (error) {
             console.error('Location error:', error);
 
-            // Try with lower accuracy if high accuracy fails
             try {
                 const location = await Location.getCurrentPositionAsync({
                     accuracy: Location.Accuracy.Balanced
@@ -206,54 +205,6 @@ export default function AddStoreScreen() {
         setLocationAccuracy(null);
     };
 
-    // Function to send email notification using Resend API
-    const sendEmailNotification = async (storeName: string, storeAddress: string, ownerEmail: string) => {
-        try {
-            const response = await fetch('https://api.resend.com/emails', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${emailConfig.RESEND_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    from: emailConfig.SENDER_EMAIL,
-                    to: emailConfig.ADMIN_EMAIL,
-                    subject: 'New Store Created - Requires Approval',
-                    html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                            <h2 style="color: #6c5ce7;">New Store Submission</h2>
-                            <p>A new store has been created and requires your approval:</p>
-                            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                                <p><strong>Store Name:</strong> ${storeName}</p>
-                                <p><strong>Store Address:</strong> ${storeAddress}</p>
-                                <p><strong>Owner Email:</strong> ${ownerEmail}</p>
-                                <p><strong>Submission Date:</strong> ${new Date().toLocaleDateString()}</p>
-                            </div>
-                            <p>Please log into the admin dashboard to review and approve this store.</p>
-                            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-                            <p style="color: #666; font-size: 12px;">
-                                This is an automated notification. Please do not reply to this email.
-                            </p>
-                        </div>
-                    `,
-                })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errorData}`);
-            }
-
-            const result = await response.json();
-            console.log('Email sent successfully:', result);
-            return true;
-        } catch (error) {
-            console.error('Failed to send email notification:', error);
-            // Don't throw the error to prevent store creation from failing
-            return false;
-        }
-    };
-
     const handleCreateStore = async () => {
         if (!user) {
             setMessage('User not authenticated');
@@ -272,6 +223,7 @@ export default function AddStoreScreen() {
                 throw new Error('Please set your store location');
             }
 
+            // Create the store
             const { data, error } = await supabase.from('stores').insert({
                 name: form.name.trim(),
                 address: form.address.trim(),
@@ -284,25 +236,35 @@ export default function AddStoreScreen() {
 
             if (error) throw error;
 
+            console.log('✅ Store created successfully:', data);
+
             // Send email notification to admin (non-blocking)
-            sendEmailNotification(form.name.trim(), form.address.trim(), user.email || 'Unknown')
-                .then(success => {
-                    if (success) {
-                        console.log('Admin notification sent successfully');
+            const ownerEmail = user.email || 'Unknown';
+            console.log('📧 Attempting to send admin notification...');
+
+            sendAdminNotification(
+                form.name.trim(),
+                form.address.trim(),
+                ownerEmail
+            )
+                .then((result: { success: any; message: any; }) => {
+                    if (result.success) {
+                        console.log('✅ Admin notification sent successfully');
                     } else {
-                        console.warn('Failed to send admin notification, but store was created');
+                        console.warn('⚠️ Failed to send admin notification:', result.message);
+                        console.warn('Store was created, but admin was not notified via email');
                     }
                 })
-                .catch(emailError => {
-                    console.error('Error in email notification:', emailError);
+                .catch((emailError: any) => {
+                    console.error('❌ Error sending admin notification:', emailError);
                 });
 
-            setAlertTitle('Success');
-            setAlertMessage('Your store has been submitted for admin approval. You will be notified once approved.');
+            setAlertTitle('🎉 Success!');
+            setAlertMessage('Your store has been submitted for admin approval. You will receive an email notification once your store is reviewed.');
             setAlertVisible(true);
             setHasStore(true);
 
-            // Navigate after a short delay to show the success message
+            // Navigate after a short delay
             setTimeout(() => {
                 navigation.navigate('MyStores');
             }, 2000);
@@ -438,8 +400,6 @@ export default function AddStoreScreen() {
                         onChangeText={(text) => setForm({ ...form, address: text })}
                     />
                 </View>
-
-
 
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Store Location *</Text>
@@ -590,9 +550,6 @@ const styles = StyleSheet.create({
         marginTop: 15,
         fontSize: 16,
         color: '#636e72',
-    },
-    loadingIndicator: {
-        marginVertical: 20,
     },
     formGroup: {
         marginBottom: 20,

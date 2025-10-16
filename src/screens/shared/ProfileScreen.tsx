@@ -567,7 +567,7 @@ export default function ProfileScreen() {
 
                         {/* Menu Footer */}
                         <View style={styles.menuFooter}>
-                            <Text style={styles.menuFooterText}>ScanWizard v1.2</Text>
+                            <Text style={styles.menuFooterText}>ScanWizard v1.3</Text>
                         </View>
                     </Animated.View>
 

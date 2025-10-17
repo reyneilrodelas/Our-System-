@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -53,6 +53,8 @@ export default function MyStoresScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [scaleAnim] = useState(new Animated.Value(0.9));
     const [fadeAnim] = useState(new Animated.Value(0));
+    const [deleting, setDeleting] = useState<string | null>(null);
+    const swipeableRefs = useRef<{ [key: string]: any }>({});
 
     const fetchStores = async (retryCount = 0, isRefresh = false) => {
         if (!user) {
@@ -130,6 +132,67 @@ export default function MyStoresScreen() {
     const onRefresh = () => {
         setRefreshing(true);
         fetchStores();
+    };
+
+    const deleteStore = async (storeId: string, storeName: string) => {
+        Alert.alert(
+            'Delete Store',
+            `Are you sure you want to delete "${storeName}"? This action cannot be undone.`,
+            [
+                {
+                    text: 'Cancel',
+                    onPress: () => {
+                        // Close swipeable
+                        if (swipeableRefs.current[storeId]) {
+                            swipeableRefs.current[storeId].close();
+                        }
+                    },
+                    style: 'cancel',
+                },
+                {
+                    text: 'Delete',
+                    onPress: async () => {
+                        try {
+                            setDeleting(storeId);
+
+                            // Immediately remove from UI for instant feedback
+                            const updatedStores = stores.filter(store => store.id !== storeId);
+                            setStores(updatedStores);
+
+                            // Update cache immediately
+                            await setCacheData(`user_stores_${user?.id}`, updatedStores);
+
+                            // Delete from database
+                            const { error: deleteError } = await supabase
+                                .from('stores')
+                                .delete()
+                                .eq('id', storeId)
+                                .eq('owner_id', user?.id);
+
+                            if (deleteError) {
+                                throw deleteError;
+                            }
+
+                            Alert.alert('Success', 'Store deleted successfully');
+                        } catch (err) {
+                            console.error('Delete error:', err);
+                            // Revert the UI change if delete fails
+                            const revertedStores = await getCacheData<Store[]>(`user_stores_${user?.id}`, CACHE_DURATIONS.MEDIUM);
+                            if (revertedStores) {
+                                setStores(revertedStores);
+                            } else {
+                                // Fallback: re-fetch
+                                fetchStores();
+                            }
+                            Alert.alert('Error', 'Failed to delete store. Please try again.');
+                        } finally {
+                            setDeleting(null);
+                        }
+                    },
+                    style: 'destructive',
+                },
+            ]
+        );
     };
 
     useEffect(() => {

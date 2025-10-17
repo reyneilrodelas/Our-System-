@@ -20,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { decode as atob } from 'base-64';
+import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
+import { useAuth } from '../../context/AuthContext';
 
 // Polyfill for base64 decoding
 function decode(base64: string): Uint8Array {
@@ -55,6 +57,7 @@ const { width: screenWidth } = Dimensions.get('window');
 const StoreDetailsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute<RouteProp<RootStackParamList, 'StoreDetails'>>();
+    const { user } = useAuth();
     const { storeId } = route.params;
     const [store, setStore] = useState<Store | null>(null);
     const [loading, setLoading] = useState(true);
@@ -257,28 +260,26 @@ const StoreDetailsScreen = () => {
             const uploadedPermitNames: string[] = [];
             const existingPermits = store.permit_images || [];
 
-            for (const permitUri of editForm.permitImages) {
-                // Check if it's a new image (local URI) or existing (already in database)
+            // Parallelize permit uploads instead of sequential
+            const permitUploadPromises = editForm.permitImages.map(async (permitUri) => {
                 if (permitUri.startsWith('file://') || permitUri.startsWith('content://')) {
-                    const permitFileName = await uploadImage(permitUri);
-                    if (permitFileName) {
-                        uploadedPermitNames.push(permitFileName);
-                    }
+                    return await uploadImage(permitUri);
                 } else {
-                    // It's an existing permit, extract the filename from the URL
                     const existingFileName = existingPermits.find(path =>
                         permitUri.includes(path)
                     );
-                    if (existingFileName) {
-                        uploadedPermitNames.push(existingFileName);
-                    }
+                    return existingFileName || null;
                 }
-            }
+            });
+
+            const permitResults = await Promise.all(permitUploadPromises);
+            uploadedPermitNames.push(...permitResults.filter((name) => name !== null));
 
             if (uploadedPermitNames.length > 0) {
                 updatedFields.permit_images = uploadedPermitNames;
             }
 
+            // Update database
             const { data, error } = await supabase
                 .from('stores')
                 .update(updatedFields)
@@ -288,32 +289,21 @@ const StoreDetailsScreen = () => {
             if (error) throw error;
             if (!data || data.length === 0) throw new Error('No data returned after update');
 
+            // Update local state immediately
             setStore({ ...store, ...updatedFields });
             setEditModalVisible(false);
+
+            // Show success message immediately (no wait for image URLs)
             setAlertTitle('Success');
             setAlertMessage('Store updated successfully');
             setAlertVisible(true);
 
-            // Update image URLs
-            if (updatedFields.image_url) {
-                const { data: imageData } = await supabase
-                    .storage
-                    .from('store-images')
-                    .getPublicUrl(updatedFields.image_url);
-                if (imageData) setImageUrl(imageData.publicUrl);
-            }
+            // Fetch image URLs in background (don't await - let it happen asynchronously)
+            updateImageUrlsInBackground(updatedFields);
 
-            if (updatedFields.permit_images) {
-                const permitUrls = await Promise.all(
-                    updatedFields.permit_images.map(async (permitPath) => {
-                        const { data: permitData } = await supabase
-                            .storage
-                            .from('store-images')
-                            .getPublicUrl(permitPath);
-                        return permitData.publicUrl;
-                    })
-                );
-                setPermitImageUrls(permitUrls);
+            // Update cache in background
+            if (user) {
+                updateStoreInCache(updatedFields);
             }
         } catch (err: any) {
             console.error('Store update error:', err);
@@ -323,8 +313,55 @@ const StoreDetailsScreen = () => {
         }
     };
 
+    const updateImageUrlsInBackground = async (updatedFields: any) => {
+        try {
+            // Update store image URL
+            if (updatedFields.image_url) {
+                const { data: imageData } = await supabase
+                    .storage
+                    .from('store-images')
+                    .getPublicUrl(updatedFields.image_url);
+                if (imageData) setImageUrl(imageData.publicUrl);
+            }
+
+            // Update permit image URLs in parallel
+            if (updatedFields.permit_images && updatedFields.permit_images.length > 0) {
+                const permitUrls = await Promise.all(
+                    updatedFields.permit_images.map(async (permitPath: string) => {
+                        const { data: permitData } = await supabase
+                            .storage
+                            .from('store-images')
+                            .getPublicUrl(permitPath);
+                        return permitData.publicUrl;
+                    })
+                );
+                setPermitImageUrls(permitUrls);
+            }
+        } catch (err) {
+            console.error('Error updating image URLs in background:', err);
+        }
+    };
+
+    const updateStoreInCache = async (updatedFields: any) => {
+        try {
+            const cacheKey = `user_stores_${user?.id}`;
+            const cachedStores = await getCacheData<any[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+            
+            if (cachedStores) {
+                // Update the store in cache
+                const updatedCachedStores = cachedStores.map(s =>
+                    s.id === store?.id ? { ...s, ...updatedFields } : s
+                );
+                await setCacheData(cacheKey, updatedCachedStores);
+            }
+        } catch (err) {
+            console.error('Error updating cache:', err);
+        }
+    };
+
     const handleDeleteStore = async () => {
         try {
+            // Delete from database
             const { error: storeError } = await supabase
                 .from('stores')
                 .delete()
@@ -332,12 +369,30 @@ const StoreDetailsScreen = () => {
 
             if (storeError) throw storeError;
 
+            // Update cache to remove deleted store
+            if (user) {
+                const cacheKey = `user_stores_${user.id}`;
+                const cachedStores = await getCacheData<any[]>(cacheKey, CACHE_DURATIONS.MEDIUM);
+                
+                if (cachedStores) {
+                    // Filter out the deleted store
+                    const updatedStores = cachedStores.filter(store => store.id !== storeId);
+                    // Update the cache
+                    await setCacheData(cacheKey, updatedStores);
+                }
+            }
+
             setDeleteModalVisible(false);
-            navigation.goBack();
-            setAlertTitle('Success');
-            setAlertMessage('Store deleted successfully');
-            setAlertVisible(true);
+            
+            // Navigate back with success notification
+            setTimeout(() => {
+                navigation.goBack();
+                setAlertTitle('Success');
+                setAlertMessage('Store deleted successfully');
+                setAlertVisible(true);
+            }, 300);
         } catch (err) {
+            console.error('Delete store error:', err);
             setAlertTitle('Error');
             setAlertMessage('Failed to delete store');
             setAlertVisible(true);

@@ -27,24 +27,20 @@ export const sendAdminNotification = async (
 
         // Prepare email content
         const subject = `🏪 New Store Registration: ${storeName}`;
-        const content = `
-Dear Admin,
+        const html = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2>New Store Registration</h2>
+                <p>A new store has been submitted for approval:</p>
+                <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <p><strong>Store Name:</strong> ${storeName}</p>
+                    <p><strong>Address:</strong> ${storeAddress}</p>
+                    <p><strong>Owner Email:</strong> ${ownerEmail}</p>
+                </div>
+                <p>Please review this store submission in your admin dashboard and take appropriate action.</p>
+                <p>Best regards,<br>System Notification</p>
+            </div>
+        `;
 
-A new store has been submitted for approval:
-
-Store Details:
--------------
-Name: ${storeName}
-Address: ${storeAddress}
-Owner Email: ${ownerEmail}
-
-Please review this store submission in your admin dashboard and take appropriate action.
-
-Best regards,
-System Notification
-`;
-
-        // Send email using Resend API directly
         const response = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -55,7 +51,7 @@ System Notification
                 from: emailConfig.SENDER_EMAIL,
                 to: emailConfig.ADMIN_EMAIL,
                 subject,
-                text: content,
+                html,
             }),
         });
 
@@ -86,13 +82,14 @@ System Notification
 
 export const emailConfig = {
     // Your Resend API key
-    RESEND_API_KEY: 're_HV3SHxdP_GRLZsTwVguckFNk1xJKiZ7vi',
+    RESEND_API_KEY: 're_ecq7qZqM_451o48HFBosc4C6M7Dye1HJE',
 
-    // Using Resend's default test domain which is already verified
-    SENDER_EMAIL: 'onboarding@resend.dev',
+    // Using your custom domain (scanwizards.com)
+    // Make sure this domain is verified in your Resend dashboard
+    SENDER_EMAIL: 'noreply@scanwizards.com',
 
     // Admin email for store notifications
-    ADMIN_EMAIL: 'reyneilrodelas29@gmail.com'
+    ADMIN_EMAIL: 'scanwizards@gmail.com'
 };
 
 // Validation function
@@ -124,12 +121,14 @@ export const validateEmailConfig = () => {
  * @param ownerEmail - The email address of the store owner
  * @param storeName - The name of the store
  * @param status - The new status of the store ('approved' or 'rejected')
+ * @param rejectionReason - Optional reason for rejection
  * @returns {Promise<{success: boolean, message: string}>}
  */
 export const sendStoreOwnerNotification = async (
     ownerEmail: string,
     storeName: string,
-    status: 'approved' | 'rejected'
+    status: 'approved' | 'rejected',
+    rejectionReason?: string
 ): Promise<{ success: boolean; message: string }> => {
     try {
         if (!validateEmailConfig()) {
@@ -152,11 +151,49 @@ export const sendStoreOwnerNotification = async (
             ? `🎉 Your store "${storeName}" has been approved!`
             : `❗ Update about your store "${storeName}"`;
 
-        const content = status === 'approved'
-            ? `Dear Store Owner,\n\nGreat news! Your store "${storeName}" has been approved by our admin team. You can now start managing your store and adding products.\n\nThank you for joining our platform!\n\nBest regards,\nThe Admin Team`
-            : `Dear Store Owner,\n\nWe regret to inform you that your store "${storeName}" could not be approved at this time. Please contact our support team for more information and guidance on how to meet our requirements.\n\nBest regards,\nThe Admin Team`;
+        const html = status === 'approved'
+            ? `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #4CAF50;">🎉 Great News!</h2>
+                    <p>Dear Store Owner,</p>
+                    <p>Your store <strong>"${storeName}"</strong> has been approved by our admin team!</p>
+                    <p>You can now:</p>
+                    <ul>
+                        <li>Start managing your store</li>
+                        <li>Add and manage products</li>
+                        <li>Update store information</li>
+                        <li>View analytics</li>
+                    </ul>
+                    <p>Log in to your account to get started.</p>
+                    <p>Thank you for joining our platform!</p>
+                    <p>Best regards,<br>The Admin Team</p>
+                </div>
+            `
+            : `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #F44336;">❗ Store Registration Update</h2>
+                    <p>Dear Store Owner,</p>
+                    <p>We regret to inform you that your store <strong>"${storeName}"</strong> has been rejected and cannot be approved at this time.</p>
+                    ${rejectionReason ? `<div style="background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; border-radius: 4px;"><p><strong>Reason for Rejection:</strong></p><p>${rejectionReason.replace(/\n/g, '<br>')}</p></div>` : ''}
+                    <p>Common reasons for rejection include:</p>
+                    <ul>
+                        <li>Incomplete or incorrect information</li>
+                        <li>Unable to verify business credentials</li>
+                        <li>Violation of platform policies</li>
+                        <li>Missing required documentation</li>
+                    </ul>
+                    <p>Please contact our support team for more information and guidance on how to meet our requirements.</p>
+                    <p><strong>Support Email:</strong> ${emailConfig.ADMIN_EMAIL}</p>
+                    <p>Best regards,<br>The Admin Team</p>
+                </div>
+            `;
 
-        // Send email using Resend API directly
+        console.log('📧 Resend API Request Details:');
+        console.log('  From:', emailConfig.SENDER_EMAIL);
+        console.log('  To:', ownerEmail);
+        console.log('  Subject:', subject);
+        console.log('  API Key exists:', !!emailConfig.RESEND_API_KEY);
+
         const response = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -167,21 +204,32 @@ export const sendStoreOwnerNotification = async (
                 from: emailConfig.SENDER_EMAIL,
                 to: ownerEmail,
                 subject,
-                text: content,
+                html,
             }),
         });
 
+        console.log('📬 Resend API Response Status:', response.status);
+        console.log('📬 Resend API Response Headers:', {
+            'Content-Type': response.headers.get('Content-Type'),
+            'Content-Length': response.headers.get('Content-Length'),
+        });
+
         const data = await response.json();
+        console.log('📬 Resend API Response Body:', JSON.stringify(data, null, 2));
 
         if (!response.ok) {
-            console.error('❌ Failed to send email:', data);
+            console.error('❌ Failed to send email to store owner:', {
+                status: response.status,
+                statusText: response.statusText,
+                data: data,
+            });
             return {
                 success: false,
-                message: data.message || 'Failed to send email notification'
+                message: data.message || `Failed to send email (${response.status}): ${JSON.stringify(data)}`
             };
         }
 
-        console.log('✅ Email sent successfully:', data);
+        console.log('✅ Email sent successfully to store owner:', data);
         return {
             success: true,
             message: 'Email notification sent successfully'

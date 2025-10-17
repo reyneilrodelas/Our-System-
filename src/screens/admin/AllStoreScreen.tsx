@@ -11,7 +11,8 @@ import {
     Animated,
     TouchableWithoutFeedback,
     Dimensions,
-    Alert
+    Alert,
+    TextInput
 } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,8 +20,9 @@ import { useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../../types/navigation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../../lib/supabase';
-import { emailConfig } from '../../config/emailConfig';
+import { emailConfig, sendStoreOwnerNotification } from '../../config/emailConfig';
 import { getCacheData, setCacheData, CACHE_DURATIONS } from '../../utils/cacheUtils';
+import { StyledAlert } from '../components/StyledAlert';
 
 const { width, height } = Dimensions.get('window');
 
@@ -28,14 +30,16 @@ interface Store {
     id: string;
     name: string;
     address: string;
-    status: 'pending' | 'approved' | 'rejected';
+    status: 'pending' | 'approved' | 'rejected' | 'suspended';
     created_at: string;
-    latitude?: number;
-    longitude?: number;
-    phone?: string;
-    email?: string;
+    updated_at?: string;
+    latitude: number;
+    longitude: number;
+    owner_id: string;
     description?: string;
-    owner_id?: string;
+    image_url?: string;
+    permit_image_url?: string;
+    permit_images?: string[];
 }
 
 interface User {
@@ -64,10 +68,47 @@ export default function AllStoresScreen() {
     const [page, setPage] = useState(0);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
+    const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
+    const [rejectionReason, setRejectionReason] = useState('');
+    const [storeToReject, setStoreToReject] = useState<Store | null>(null);
+
+    // StyledAlert states
+    const [alertVisible, setAlertVisible] = useState(false);
+    const [alertData, setAlertData] = useState({
+        title: '',
+        message: '',
+        confirmText: 'OK',
+        cancelText: 'Cancel',
+        showCancel: false,
+        onConfirm: () => {},
+        onCancel: () => {}
+    });
 
     const PAGE_SIZE = 20;
     const fadeAnim = new Animated.Value(0);
     const slideAnim = new Animated.Value(height);
+
+    // Helper function to show styled alerts
+    const showAlert = (
+        title: string,
+        message: string,
+        confirmText = 'OK',
+        onConfirm = () => {},
+        showCancel = false,
+        cancelText = 'Cancel',
+        onCancel = () => {}
+    ) => {
+        setAlertData({
+            title,
+            message,
+            confirmText,
+            cancelText,
+            showCancel,
+            onConfirm,
+            onCancel
+        });
+        setAlertVisible(true);
+    };
 
     useEffect(() => {
         setPage(0);
@@ -102,9 +143,29 @@ export default function AllStoresScreen() {
         }
 
         try {
+            console.log('📡 Fetching stores with filter:', filter);
+            console.log('📄 Page:', currentPage);
+
+            // Check Supabase connection first
+            const { data: healthCheck, error: healthError } = await supabase
+                .from('stores')
+                .select('id')
+                .limit(1);
+
+            if (healthError) {
+                console.error('❌ Supabase connection error:', {
+                    message: healthError.message,
+                    code: healthError.code,
+                    hint: healthError.hint,
+                    details: healthError.details,
+                });
+            } else {
+                console.log('✅ Supabase connection OK');
+            }
+
             let query = supabase
                 .from('stores')
-                .select('id, name, address, status, created_at, latitude, longitude, email, phone')
+                .select('id, name, address, status, created_at, latitude, longitude, owner_id, description, image_url, permit_image_url')
                 .order('created_at', { ascending: false })
                 .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
 
@@ -115,9 +176,28 @@ export default function AllStoresScreen() {
             const { data, error } = await query;
 
             if (error) {
-                console.log('Error fetching stores:', error);
-                Alert.alert('Error', 'Failed to fetch stores');
+                console.error('❌ Error fetching stores:', {
+                    message: error.message,
+                    code: error.code,
+                    hint: error.hint,
+                    details: error.details,
+                });
+                
+                let errorMessage = 'Failed to fetch stores';
+                
+                if (error.code === '42P01') {
+                    errorMessage = 'Stores table not found. Check database schema.';
+                } else if (error.code === '42501') {
+                    errorMessage = 'Permission denied. Check RLS policies.';
+                } else if (error.message?.includes('authentication')) {
+                    errorMessage = 'Authentication failed. Check Supabase credentials.';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                
+                showAlert('❌ Error', errorMessage);
             } else {
+                console.log('✅ Stores fetched successfully:', data?.length || 0);
                 const newData = data || [];
                 setStores(prev => isRefresh ? newData : [...prev, ...newData]);
 
@@ -133,9 +213,13 @@ export default function AllStoresScreen() {
                     setPage(prev => prev + 1);
                 }
             }
-        } catch (err) {
-            console.error('Fetch error:', err);
-            Alert.alert('Error', 'Failed to fetch stores');
+        } catch (err: any) {
+            console.error('❌ Fetch exception:', {
+                message: err.message,
+                stack: err.stack,
+                name: err.name,
+            });
+            showAlert('❌ Error', `Unexpected error: ${err.message || 'Failed to fetch stores'}`);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -201,8 +285,14 @@ export default function AllStoresScreen() {
         try {
             console.log('🔍 Fetching email for owner ID:', ownerId);
 
+            if (!ownerId || ownerId.trim() === '') {
+                console.error('❌ Invalid owner ID provided');
+                return null;
+            }
+
             // Method 1: Try using RPC function (most reliable if set up)
             try {
+                console.log('🔍 Method 1: Trying RPC function get_user_email...');
                 const { data: rpcEmail, error: rpcError } = await supabase
                     .rpc('get_user_email', { user_id: ownerId });
 
@@ -216,6 +306,7 @@ export default function AllStoresScreen() {
             }
 
             // Method 2: Try profiles table with email column
+            console.log('🔍 Method 2: Trying profiles table with email column...');
             const { data: profileData, error: profileError } = await supabase
                 .from('profiles')
                 .select('email')
@@ -228,7 +319,26 @@ export default function AllStoresScreen() {
             }
             console.log('⚠️ Profile lookup failed:', profileError?.message);
 
-            // Method 3: Try auth.users (requires admin privileges)
+            // Method 3: Try profiles table with user_email column (alternative naming)
+            console.log('🔍 Method 3: Trying profiles table with user_email column...');
+            try {
+                const { data: profileData2, error: profileError2 } = await supabase
+                    .from('profiles')
+                    .select('user_email')
+                    .eq('id', ownerId)
+                    .single();
+
+                if (!profileError2 && profileData2?.user_email) {
+                    console.log('✅ Found email from profiles.user_email:', profileData2.user_email);
+                    return profileData2.user_email;
+                }
+                console.log('⚠️ Profile user_email lookup failed:', profileError2?.message);
+            } catch (e) {
+                console.log('⚠️ Method 3 failed:', e);
+            }
+
+            // Method 4: Try auth.users (requires admin privileges)
+            console.log('🔍 Method 4: Trying auth.users table...');
             try {
                 const { data: { user }, error: authError } = await supabase.auth.admin.getUserById(ownerId);
 
@@ -241,7 +351,8 @@ export default function AllStoresScreen() {
                 console.log('⚠️ Auth admin not available:', authError);
             }
 
-            console.error('❌ All email lookup methods failed');
+            console.error('❌ All email lookup methods failed for owner ID:', ownerId);
+            console.error('❌ Could not find email in: RPC, profiles.email, profiles.user_email, or auth.users');
             return null;
         } catch (error) {
             console.error('❌ Error in getStoreOwnerEmail:', error);
@@ -249,86 +360,32 @@ export default function AllStoresScreen() {
         }
     };
 
-    // IMPROVED: Better error handling and validation
-    const sendStatusEmail = async (storeEmail: string, storeName: string, status: 'approved' | 'rejected') => {
+    // IMPROVED: Use the centralized sendStoreOwnerNotification function
+    const sendOwnerNotificationEmail = async (storeEmail: string, storeName: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
         try {
-            console.log('📧 Preparing to send email...');
-            console.log('To:', storeEmail);
-            console.log('Store:', storeName);
-            console.log('Status:', status);
+            console.log('📧 === SENDING STORE OWNER NOTIFICATION ===');
+            console.log('📧 To:', storeEmail);
+            console.log('📧 Store:', storeName);
+            console.log('📧 Status:', status);
+            console.log('📧 Rejection Reason:', rejectionReason || 'N/A');
+            console.log('📧 Sender:', emailConfig.SENDER_EMAIL);
+            console.log('📧 API Key configured:', !!emailConfig.RESEND_API_KEY);
 
-            // Validate email configuration
-            if (!emailConfig.RESEND_API_KEY) {
-                throw new Error('Missing RESEND_API_KEY in configuration');
-            }
-            if (!emailConfig.SENDER_EMAIL) {
-                throw new Error('Missing SENDER_EMAIL in configuration');
-            }
-
-            // Validate recipient email
-            if (!storeEmail || !storeEmail.includes('@')) {
-                throw new Error('Invalid recipient email address');
+            if (!storeEmail || storeEmail.trim() === '') {
+                throw new Error('Invalid store owner email address');
             }
 
-            console.log('✅ Email configuration validated');
+            const result = await sendStoreOwnerNotification(storeEmail, storeName, status, rejectionReason);
 
-            const response = await fetch('https://api.resend.com/emails', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${emailConfig.RESEND_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    from: emailConfig.SENDER_EMAIL,
-                    to: storeEmail,
-                    subject: `Store Registration ${status === 'approved' ? 'Approved!' : 'Status Update'}`,
-                    html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                            <h2 style="color: ${status === 'approved' ? '#4CAF50' : '#F44336'}">
-                                Store Registration ${status.charAt(0).toUpperCase() + status.slice(1)}
-                            </h2>
-                            <p>Dear Store Owner,</p>
-                            <p>We are writing to inform you that your store "<strong>${storeName}</strong>" has been <strong>${status}</strong> by the administrator.</p>
-                            ${status === 'approved'
-                            ? `<div>
-                                    <p>Congratulations! You can now:</p>
-                                    <ul>
-                                        <li>Access your store dashboard</li>
-                                        <li>Add and manage your products</li>
-                                        <li>Update your store information</li>
-                                        <li>View store analytics</li>
-                                    </ul>
-                                    <p>Log in to your account to start managing your store!</p>
-                                   </div>`
-                            : `<div>
-                                    <p>Unfortunately, your store registration has been rejected. This could be due to:</p>
-                                    <ul>
-                                        <li>Incomplete or incorrect information</li>
-                                        <li>Unable to verify business credentials</li>
-                                        <li>Violation of platform policies</li>
-                                    </ul>
-                                    <p>For more information about why your store was rejected or to appeal this decision, please contact our administrator at ${emailConfig.ADMIN_EMAIL || 'scanwizard@gmail.com'}.</p>
-                                   </div>`
-                        }
-                            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
-                                <p>Best regards,<br>The Admin Team</p>
-                            </div>
-                        </div>
-                    `
-                })
-            });
+            console.log('📧 Email Result:', JSON.stringify(result, null, 2));
 
-            console.log('📬 Email API Response Status:', response.status);
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error('❌ Email API Error:', errorData);
-                throw new Error(errorData.message || `Email API returned status ${response.status}`);
+            if (result.success) {
+                console.log('✅ Email sent successfully:', result.message);
+                return true;
+            } else {
+                console.error('❌ Email sending failed:', result.message);
+                throw new Error(result.message);
             }
-
-            const responseData = await response.json();
-            console.log('✅ Email sent successfully:', responseData);
-            return true;
         } catch (error) {
             console.error('❌ Error sending email:', error);
             throw error;
@@ -336,7 +393,7 @@ export default function AllStoresScreen() {
     };
 
     // IMPROVED: Better status change handling with detailed feedback
-    const handleStatusChange = async (storeId: string, newStatus: 'approved' | 'rejected', event?: any) => {
+    const handleStatusChange = async (storeId: string, newStatus: 'approved' | 'rejected', event?: any, rejectionReason?: string) => {
         if (event) {
             event.stopPropagation();
         }
@@ -353,14 +410,13 @@ export default function AllStoresScreen() {
 
             if (storeError || !storeData) {
                 console.error('❌ Error fetching store details:', storeError);
-                Alert.alert('Error', 'Failed to fetch store details');
+                showAlert('❌ Error', 'Failed to fetch store details');
                 return;
             }
 
             console.log('✅ Store data retrieved:', {
                 name: storeData.name,
-                owner_id: storeData.owner_id,
-                email: storeData.email
+                owner_id: storeData.owner_id
             });
 
             // Update store status
@@ -371,7 +427,7 @@ export default function AllStoresScreen() {
 
             if (updateError) {
                 console.error('❌ Error updating store status:', updateError);
-                Alert.alert('Error', `Failed to ${newStatus} the store`);
+                showAlert('❌ Error', `Failed to ${newStatus} the store`);
                 return;
             }
 
@@ -390,7 +446,7 @@ export default function AllStoresScreen() {
             let ownerEmail = null;
             let emailSource = '';
 
-            // First try to get owner's email from profiles/auth
+            // Try to get owner's email from profiles/auth
             if (storeData.owner_id) {
                 ownerEmail = await getStoreOwnerEmail(storeData.owner_id);
                 if (ownerEmail) {
@@ -398,39 +454,29 @@ export default function AllStoresScreen() {
                 }
             }
 
-            // Fallback to store's direct email
-            if (!ownerEmail && storeData.email) {
-                ownerEmail = storeData.email;
-                emailSource = 'store email';
-                console.log('📧 Using store email as fallback:', ownerEmail);
-            }
-
             // Send email notification if we found an email
             if (ownerEmail && ownerEmail.trim() !== '') {
                 try {
                     console.log(`📧 Attempting to send email to: ${ownerEmail} (from ${emailSource})`);
-                    await sendStatusEmail(ownerEmail, storeData.name, newStatus);
+                    await sendOwnerNotificationEmail(ownerEmail, storeData.name, newStatus, rejectionReason);
 
-                    Alert.alert(
-                        'Success',
-                        `Store ${newStatus} successfully!\n\nEmail notification sent to:\n${ownerEmail}`,
-                        [{ text: 'OK' }]
+                    showAlert(
+                        '✅ Success',
+                        `Store ${newStatus} successfully!\n\nEmail notification sent to:\n${ownerEmail}`
                     );
                 } catch (emailError: any) {
                     console.error('❌ Email sending error:', emailError);
 
-                    Alert.alert(
-                        'Partial Success',
-                        `Store status updated to ${newStatus}.\n\nHowever, email notification failed:\n${emailError.message}\n\nPlease check:\n• Resend API key is valid\n• Sender email is verified\n• Recipient email is correct`,
-                        [{ text: 'OK' }]
+                    showAlert(
+                        '⚠️ Partial Success',
+                        `Store status updated to ${newStatus}.\n\nHowever, email notification failed:\n${emailError.message}\n\nPlease check:\n• Resend API key is valid\n• Sender email is verified\n• Recipient email is correct`
                     );
                 }
             } else {
                 console.log('⚠️ No email address found for notification');
-                Alert.alert(
-                    'Success',
-                    `Store ${newStatus} successfully!\n\nNote: No email address found for owner notification.\n\nOwner ID: ${storeData.owner_id || 'N/A'}\nStore Email: ${storeData.email || 'N/A'}`,
-                    [{ text: 'OK' }]
+                showAlert(
+                    '✅ Success',
+                    `Store ${newStatus} successfully!\n\nNote: No email address found for owner notification.\n\nOwner ID: ${storeData.owner_id || 'N/A'}`
                 );
             }
 
@@ -439,7 +485,7 @@ export default function AllStoresScreen() {
 
         } catch (error: any) {
             console.error('❌ Error in handleStatusChange:', error);
-            Alert.alert('Error', `An unexpected error occurred: ${error.message}`);
+            showAlert('❌ Error', `An unexpected error occurred: ${error.message}`);
         }
     };
 
@@ -484,7 +530,11 @@ export default function AllStoresScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.actionButton, styles.rejectButton]}
-                        onPress={(event) => handleStatusChange(item.id, 'rejected', event)}
+                        onPress={() => {
+                            setStoreToReject(item);
+                            setRejectionReason('');
+                            setRejectionModalVisible(true);
+                        }}
                     >
                         <Text style={styles.actionText}>Reject</Text>
                     </TouchableOpacity>
@@ -556,7 +606,7 @@ export default function AllStoresScreen() {
             ) : (
                 <FlatList
                     data={stores}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={(item, index) => `${item.id}-${index}`}
                     refreshing={refreshing}
                     onRefresh={() => fetchStores(true)}
                     contentContainerStyle={styles.listContent}
@@ -623,21 +673,9 @@ export default function AllStoresScreen() {
                                         </View>
 
                                         {/* Contact Information */}
-                                        {(selectedStore.phone || selectedStore.email || selectedStore.owner_id) && (
+                                        {(selectedStore.owner_id) && (
                                             <View style={styles.detailsSection}>
-                                                <Text style={styles.sectionTitle}>Contact Information</Text>
-                                                {selectedStore.phone && (
-                                                    <View style={styles.detailRow}>
-                                                        <Ionicons name="call" size={18} color="#4A90E2" />
-                                                        <Text style={styles.detailText}>{selectedStore.phone}</Text>
-                                                    </View>
-                                                )}
-                                                {selectedStore.email && (
-                                                    <View style={styles.detailRow}>
-                                                        <Ionicons name="mail" size={18} color="#4A90E2" />
-                                                        <Text style={styles.detailText}>{selectedStore.email}</Text>
-                                                    </View>
-                                                )}
+                                                <Text style={styles.sectionTitle}>Owner Information</Text>
                                                 {selectedStore.owner_id && (
                                                     <View style={styles.detailRow}>
                                                         <Ionicons name="person" size={18} color="#4A90E2" />
@@ -700,7 +738,9 @@ export default function AllStoresScreen() {
                                                     <TouchableOpacity
                                                         style={[styles.modalActionButton, styles.modalRejectButton]}
                                                         onPress={() => {
-                                                            handleStatusChange(selectedStore.id, 'rejected');
+                                                            setStoreToReject(selectedStore);
+                                                            setRejectionReason('');
+                                                            setRejectionModalVisible(true);
                                                             closeModal();
                                                         }}
                                                     >
@@ -733,6 +773,73 @@ export default function AllStoresScreen() {
                         </TouchableWithoutFeedback>
                     </Animated.View>
                 </TouchableWithoutFeedback>
+            </Modal>
+
+            {/* Styled Alert */}
+            <StyledAlert
+                visible={alertVisible}
+                title={alertData.title}
+                message={alertData.message}
+                confirmText={alertData.confirmText}
+                cancelText={alertData.cancelText}
+                showCancel={alertData.showCancel}
+                onOk={alertData.onConfirm}
+                onCancel={alertData.onCancel}
+                onClose={() => setAlertVisible(false)}
+            />
+
+            {/* Rejection Reason Modal */}
+            <Modal
+                visible={rejectionModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setRejectionModalVisible(false)}
+            >
+                <View style={styles.rejectionModalContainer}>
+                    <View style={styles.rejectionModalContent}>
+                        <View style={styles.rejectionModalHeader}>
+                            <Text style={styles.rejectionModalTitle}>Reject Store</Text>
+                            <TouchableOpacity onPress={() => setRejectionModalVisible(false)}>
+                                <Ionicons name="close" size={24} color="#333" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {storeToReject && (
+                            <>
+                                <Text style={styles.rejectionStoreNameText}>{storeToReject.name}</Text>
+                                <Text style={styles.rejectionReasonLabel}>Reason for Rejection (Optional)</Text>
+                                <TextInput
+                                    style={styles.rejectionReasonInput}
+                                    placeholder="Enter reason for rejection..."
+                                    placeholderTextColor="#999"
+                                    multiline
+                                    numberOfLines={4}
+                                    value={rejectionReason}
+                                    onChangeText={setRejectionReason}
+                                    textAlignVertical="top"
+                                />
+
+                                <View style={styles.rejectionButtonContainer}>
+                                    <TouchableOpacity
+                                        style={styles.rejectionCancelButton}
+                                        onPress={() => setRejectionModalVisible(false)}
+                                    >
+                                        <Text style={styles.rejectionCancelButtonText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.rejectionConfirmButton}
+                                        onPress={async () => {
+                                            setRejectionModalVisible(false);
+                                            await handleStatusChange(storeToReject.id, 'rejected', undefined, rejectionReason);
+                                        }}
+                                    >
+                                        <Text style={styles.rejectionConfirmButtonText}>Reject Store</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </>
+                        )}
+                    </View>
+                </View>
             </Modal>
         </View>
     );
@@ -1076,5 +1183,83 @@ const styles = StyleSheet.create({
     loadingFooter: {
         paddingVertical: 20,
         alignItems: 'center',
+    },
+    rejectionModalContainer: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    rejectionModalContent: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 30,
+        maxHeight: '80%',
+    },
+    rejectionModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    rejectionModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#333',
+    },
+    rejectionStoreNameText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#666',
+        marginBottom: 20,
+        paddingBottom: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    rejectionReasonLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 10,
+    },
+    rejectionReasonInput: {
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 10,
+        padding: 12,
+        fontSize: 14,
+        color: '#333',
+        marginBottom: 20,
+        maxHeight: 120,
+    },
+    rejectionButtonContainer: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    rejectionCancelButton: {
+        flex: 1,
+        backgroundColor: '#f0f0f0',
+        paddingVertical: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    rejectionCancelButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+    },
+    rejectionConfirmButton: {
+        flex: 1,
+        backgroundColor: '#F44336',
+        paddingVertical: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    rejectionConfirmButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#fff',
     },
 });

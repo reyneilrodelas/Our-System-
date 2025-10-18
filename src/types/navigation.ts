@@ -7,7 +7,8 @@ export type RootStackParamList = {
     ProfileScreen: { refreshed?: number };
     Login: undefined;
     Signup: undefined;
-    ResetPassword: { token?: string; type?: string } | undefined;
+    ForgotPassword: undefined;
+    ResetPassword: { token?: string; type?: string; email?: string } | undefined;
     MapScreen: { storeData: any[]; userLocation: any };
     Main: undefined;
     StoreOwner: NavigatorScreenParams<StoreOwnerStackParamList>;

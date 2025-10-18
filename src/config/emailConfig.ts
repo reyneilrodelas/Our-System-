@@ -81,15 +81,15 @@ export const sendAdminNotification = async (
 };
 
 export const emailConfig = {
-    // Your Resend API key
-    RESEND_API_KEY: 're_ecq7qZqM_451o48HFBosc4C6M7Dye1HJE',
+    // Resend API key from environment variables
+    RESEND_API_KEY: process.env.RESEND_API_KEY || process.env.EXPO_PUBLIC_RESEND_API_KEY,
 
     // Using your custom domain (scanwizards.com)
     // Make sure this domain is verified in your Resend dashboard
-    SENDER_EMAIL: 'noreply@scanwizards.com',
+    SENDER_EMAIL: process.env.SENDER_EMAIL || 'noreply@scanwizards.com',
 
     // Admin email for store notifications
-    ADMIN_EMAIL: 'scanwizards@gmail.com'
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'scanwizards@gmail.com'
 };
 
 // Validation function

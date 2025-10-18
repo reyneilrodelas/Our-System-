@@ -243,10 +243,10 @@ function AdminStackScreen() {
 // App Entry Point
 export default function App() {
   const linking = {
-    prefixes: ['scanwizard://'],
+    prefixes: ['scanwizard://', 'https://scanwizard.app'],
     config: {
       screens: {
-        ResetPassword: 'reset-password/:token/:type',
+        ResetPassword: 'reset-password',
         Login: 'login',
         // Add other deep link routes as needed
       },
@@ -256,17 +256,23 @@ export default function App() {
   useEffect(() => {
     // Handle deep links when app is not running (cold start)
     const getInitialURL = async () => {
-      const url = await Linking.getInitialURL();
-      if (url) {
-        console.log('Initial URL:', url);
+      try {
+        const url = await Linking.getInitialURL();
+        if (url) {
+          console.log('🔗 [APP] Initial URL (cold start):', url);
+        } else {
+          console.log('ℹ️ [APP] No initial URL - normal app launch');
+        }
+      } catch (error) {
+        console.error('❌ [APP] Error getting initial URL:', error);
       }
     };
 
     getInitialURL();
 
-    // Handle deep links when app is running
+    // Handle deep links when app is already running (warm start)
     const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
-      console.log('Received URL:', url);
+      console.log('🔗 [APP] Received deep link (warm start):', url);
     });
 
     return () => {

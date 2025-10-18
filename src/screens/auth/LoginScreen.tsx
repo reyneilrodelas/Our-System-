@@ -34,6 +34,7 @@ export default function LoginScreen({ navigation }: Props) {
     const [password, setPassword] = useState('');
     const [loginLoading, setLoginLoading] = useState(false);
     const [googleLoading, setGoogleLoading] = useState(false);
+    const [resetLoading, setResetLoading] = useState(false);
     const [focusedField, setFocusedField] = useState('');
 
     // Styled alert modal state
@@ -72,39 +73,118 @@ export default function LoginScreen({ navigation }: Props) {
             }),
         ]).start();
 
-        // Check for existing session only once on mount
-        checkSession();
+        let isHandlingDeepLink = false;
 
-        // Listen for deep links
+        // Handle deep links
         const handleDeepLink = async ({ url }: { url: string }) => {
-            console.log('Deep link received:', url);
+            console.log('🔗 [LoginScreen] Deep link received:', url);
 
-            if (url.includes('reset-password')) {
-                const params = new URL(url).searchParams;
-                const token = params.get('token');
-                const type = params.get('type');
+            if (isHandlingDeepLink) {
+                console.log('⚠️ [LoginScreen] Already handling a deep link, ignoring...');
+                return;
+            }
 
-                if (type === 'recovery' && token) {
-                    navigation.navigate('ResetPassword', { token, type });
+            try {
+                const urlObj = new URL(url);
+                console.log('🔗 [LoginScreen] URL breakdown:', {
+                    pathname: urlObj.pathname,
+                    search: urlObj.search,
+                    hash: urlObj.hash
+                });
+
+                // Check if it's a password reset link
+                if (url.includes('reset-password')) {
+                    isHandlingDeepLink = true;
+                    console.log('✅ [LoginScreen] Password reset link detected');
+
+                    // Supabase sends tokens in the hash fragment after # (not query params)
+                    // Format: #access_token=xxx&expires_in=3600&refresh_token=yyy&token_type=bearer&type=recovery
+                    const hash = urlObj.hash.substring(1); // Remove the # symbol
+                    const hashParams = new URLSearchParams(hash);
+
+                    const accessToken = hashParams.get('access_token');
+                    const refreshToken = hashParams.get('refresh_token');
+                    const type = hashParams.get('type');
+
+                    console.log('📦 [LoginScreen] Extracted from hash:', {
+                        hasAccessToken: !!accessToken,
+                        hasRefreshToken: !!refreshToken,
+                        type: type,
+                        accessTokenPreview: accessToken ? `${accessToken.substring(0, 20)}...` : 'MISSING'
+                    });
+
+                    if (accessToken && refreshToken && type === 'recovery') {
+                        console.log('✅ [LoginScreen] Valid recovery tokens found');
+
+                        // Set the session using the tokens from the URL
+                        console.log('🔐 [LoginScreen] Setting session with recovery tokens...');
+                        const { data, error } = await supabase.auth.setSession({
+                            access_token: accessToken,
+                            refresh_token: refreshToken
+                        });
+
+                        if (error) {
+                            console.error('❌ [LoginScreen] Error setting session:', error);
+                            showStyledAlert(
+                                'Session Error',
+                                'Failed to verify the password reset link. Please request a new one.'
+                            );
+                            isHandlingDeepLink = false;
+                            return;
+                        }
+
+                        console.log('✅ [LoginScreen] Session established, navigating to ResetPassword');
+
+                        // Navigate to reset password screen
+                        // Give a small delay to ensure navigation is ready
+                        setTimeout(() => {
+                            navigation.navigate('ResetPassword', {
+                                token: accessToken,
+                                type: 'recovery'
+                            });
+                            isHandlingDeepLink = false;
+                        }, 300);
+                    } else {
+                        console.log('❌ [LoginScreen] Missing required tokens in URL');
+                        console.log('Hash content:', hash);
+                        showStyledAlert(
+                            'Invalid Link',
+                            'The password reset link is invalid or incomplete. Please request a new password reset email.'
+                        );
+                        isHandlingDeepLink = false;
+                    }
+                } else {
+                    console.log('ℹ️ [LoginScreen] Not a reset-password link');
                 }
+            } catch (error) {
+                console.error('❌ [LoginScreen] Error parsing deep link:', error);
+                showStyledAlert('Error', 'There was an error processing the link. Please try again.');
+                isHandlingDeepLink = false;
             }
         };
 
-        const subscription = Linking.addEventListener('url', handleDeepLink);
-
+        // Check initial URL first (for cold starts)
         Linking.getInitialURL().then(url => {
             if (url) {
-                console.log('Initial deep link:', url);
+                console.log('🔗 [LoginScreen] Initial URL detected (cold start):', url);
                 handleDeepLink({ url });
+            } else {
+                console.log('ℹ️ [LoginScreen] No initial URL, checking session...');
+                // Only check session if no deep link is present
+                checkSession();
             }
         }).catch(err => {
-            console.error('Error getting initial URL:', err);
+            console.error('❌ [LoginScreen] Error getting initial URL:', err);
+            checkSession();
         });
+
+        // Listen for deep links while app is running
+        const subscription = Linking.addEventListener('url', handleDeepLink);
 
         return () => {
             subscription.remove();
         };
-    }, []);
+    }, [navigation]);
 
     const checkSession = async () => {
         try {
@@ -118,24 +198,56 @@ export default function LoginScreen({ navigation }: Props) {
     };
 
     const handlePasswordReset = async () => {
+        console.log('=== PASSWORD RESET STARTED ===');
+        console.log('Email entered:', email);
+        
         if (!email) {
+            console.log('❌ No email provided');
             showStyledAlert('Email Required', 'Please enter your email first to reset your password');
             return;
         }
 
+        setResetLoading(true);
         try {
+            console.log('📧 Sending password reset email to:', email);
+            console.log('📧 Redirect URL:', 'scanwizard://reset-password');
+            
+            // Important: Don't include query parameters here - Supabase will add the token
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
                 redirectTo: 'scanwizard://reset-password'
             });
-            if (error) throw error;
+            
+            if (error) {
+                console.error('❌ Reset password error:', error);
+                throw error;
+            }
 
+            console.log('✅ Password reset email sent successfully');
             showStyledAlert(
                 'Reset Link Sent! 📧',
                 'A password reset link has been sent to your email. Please check your inbox and click the link to reset your password.',
                 () => setStyledAlertVisible(false)
             );
-        } catch (error) {
-            showStyledAlert('Reset Failed', (error as any).message);
+        } catch (error: any) {
+            console.error('❌ Password reset exception:', error);
+            console.error('Error message:', error?.message);
+            console.error('Error details:', JSON.stringify(error, null, 2));
+            
+            let errorMessage = error?.message || 'An unknown error occurred';
+            
+            // Provide more helpful error messages
+            if (errorMessage.includes('Invalid email')) {
+                errorMessage = 'The email address is invalid. Please check and try again.';
+            } else if (errorMessage.includes('User not found')) {
+                errorMessage = 'This email is not registered. Please sign up first.';
+            } else if (errorMessage.includes('over_email_send_rate_limit')) {
+                errorMessage = 'Too many reset emails sent. Please try again later.';
+            }
+            
+            showStyledAlert('Reset Failed ❌', errorMessage);
+        } finally {
+            setResetLoading(false);
+            console.log('=== PASSWORD RESET COMPLETED ===\n');
         }
     };
 
@@ -368,11 +480,18 @@ export default function LoginScreen({ navigation }: Props) {
 
                         {/* Forgot Password */}
                         <TouchableOpacity
-                            style={styles.forgotContainer}
+                            style={[
+                                styles.forgotContainer,
+                                resetLoading && styles.forgotContainerDisabled
+                            ]}
                             onPress={handlePasswordReset}
-                            disabled={loginLoading || googleLoading}
+                            disabled={loginLoading || googleLoading || resetLoading}
                         >
-                            <Text style={styles.forgotText}>Forgot Password?</Text>
+                            {resetLoading ? (
+                                <ActivityIndicator size="small" color="#007AFF" />
+                            ) : (
+                                <Text style={styles.forgotText}>Forgot Password?</Text>
+                            )}
                         </TouchableOpacity>
 
                         {/* Login Button */}
@@ -501,6 +620,9 @@ const styles = StyleSheet.create({
         alignSelf: 'flex-end',
         marginBottom: 24,
         paddingVertical: 8,
+    },
+    forgotContainerDisabled: {
+        opacity: 0.6,
     },
     forgotText: {
         fontSize: 14,

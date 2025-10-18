@@ -34,7 +34,6 @@ export default function LoginScreen({ navigation }: Props) {
     const [password, setPassword] = useState('');
     const [loginLoading, setLoginLoading] = useState(false);
     const [googleLoading, setGoogleLoading] = useState(false);
-    const [resetLoading, setResetLoading] = useState(false);
     const [focusedField, setFocusedField] = useState('');
 
     // Styled alert modal state
@@ -46,6 +45,7 @@ export default function LoginScreen({ navigation }: Props) {
     // Navigation guard
     const isNavigating = useRef(false);
     const isLoggingIn = useRef(false);
+    const hasCheckedSession = useRef(false);
 
     // Animation refs
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -73,181 +73,122 @@ export default function LoginScreen({ navigation }: Props) {
             }),
         ]).start();
 
-        let isHandlingDeepLink = false;
+        // Check for existing session ONLY once
+        if (!hasCheckedSession.current) {
+            hasCheckedSession.current = true;
+            const sessionCheckTimeout = setTimeout(() => {
+                checkSession();
+            }, 500);
+        }
 
-        // Handle deep links
+        // Reset navigation flag when screen is focused (user returned from somewhere)
+        const unsubscribeFocus = navigation.addListener('focus', () => {
+            console.log('📍 LoginScreen focused');
+            // Reset all guards when returning to login screen
+            if (isNavigating.current) {
+                isNavigating.current = false;
+                console.log('🔄 Reset navigation guard');
+            }
+            if (isLoggingIn.current) {
+                isLoggingIn.current = false;
+                console.log('🔄 Reset login guard');
+            }
+            // Reset loading states
+            setLoginLoading(false);
+            setGoogleLoading(false);
+        });
+
+        // Listen for deep links
         const handleDeepLink = async ({ url }: { url: string }) => {
             console.log('🔗 [LoginScreen] Deep link received:', url);
+            console.log('🔗 [LoginScreen] Full URL breakdown:', {
+                href: url,
+                hostname: new URL(url).hostname,
+                pathname: new URL(url).pathname,
+                search: new URL(url).search,
+                hash: new URL(url).hash
+            });
 
-            if (isHandlingDeepLink) {
-                console.log('⚠️ [LoginScreen] Already handling a deep link, ignoring...');
-                return;
-            }
+            if (url.includes('reset-password')) {
+                console.log('✅ [LoginScreen] Reset password link detected');
+                try {
+                    const urlObj = new URL(url);
+                    let token = urlObj.searchParams.get('token');
 
-            try {
-                const urlObj = new URL(url);
-                console.log('🔗 [LoginScreen] URL breakdown:', {
-                    pathname: urlObj.pathname,
-                    search: urlObj.search,
-                    hash: urlObj.hash
-                });
+                    // If token not in query params, check hash fragment (Supabase may put it there)
+                    if (!token && urlObj.hash) {
+                        console.log('🔍 Token not in query params, checking hash fragment');
+                        // Hash format: #access_token=xxx&type=recovery&expires_in=3600
+                        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+                        token = hashParams.get('access_token');
+                        console.log('📦 Token from hash:', token ? `${token.substring(0, 20)}...` : 'MISSING');
+                    }
 
-                // Check if it's a password reset link
-                if (url.includes('reset-password')) {
-                    isHandlingDeepLink = true;
-                    console.log('✅ [LoginScreen] Password reset link detected');
-
-                    // Supabase sends tokens in the hash fragment after # (not query params)
-                    // Format: #access_token=xxx&expires_in=3600&refresh_token=yyy&token_type=bearer&type=recovery
-                    const hash = urlObj.hash.substring(1); // Remove the # symbol
-                    const hashParams = new URLSearchParams(hash);
-
-                    const accessToken = hashParams.get('access_token');
-                    const refreshToken = hashParams.get('refresh_token');
-                    const type = hashParams.get('type');
-
-                    console.log('📦 [LoginScreen] Extracted from hash:', {
-                        hasAccessToken: !!accessToken,
-                        hasRefreshToken: !!refreshToken,
-                        type: type,
-                        accessTokenPreview: accessToken ? `${accessToken.substring(0, 20)}...` : 'MISSING'
+                    console.log('📦 [LoginScreen] Extracted params:', {
+                        token: token ? `${token.substring(0, 20)}...` : 'MISSING',
+                        allParams: Array.from(urlObj.searchParams.entries())
                     });
 
-                    if (accessToken && refreshToken && type === 'recovery') {
-                        console.log('✅ [LoginScreen] Valid recovery tokens found');
-
-                        // Set the session using the tokens from the URL
-                        console.log('🔐 [LoginScreen] Setting session with recovery tokens...');
-                        const { data, error } = await supabase.auth.setSession({
-                            access_token: accessToken,
-                            refresh_token: refreshToken
-                        });
-
-                        if (error) {
-                            console.error('❌ [LoginScreen] Error setting session:', error);
-                            showStyledAlert(
-                                'Session Error',
-                                'Failed to verify the password reset link. Please request a new one.'
-                            );
-                            isHandlingDeepLink = false;
-                            return;
-                        }
-
-                        console.log('✅ [LoginScreen] Session established, navigating to ResetPassword');
-
-                        // Navigate to reset password screen
-                        // Give a small delay to ensure navigation is ready
-                        setTimeout(() => {
-                            navigation.navigate('ResetPassword', {
-                                token: accessToken,
-                                type: 'recovery'
-                            });
-                            isHandlingDeepLink = false;
-                        }, 300);
+                    if (token) {
+                        console.log('✅ [LoginScreen] Valid recovery token found, navigating to ResetPassword');
+                        navigation.navigate('ResetPassword', { token, type: 'recovery' });
                     } else {
-                        console.log('❌ [LoginScreen] Missing required tokens in URL');
-                        console.log('Hash content:', hash);
-                        showStyledAlert(
-                            'Invalid Link',
-                            'The password reset link is invalid or incomplete. Please request a new password reset email.'
-                        );
-                        isHandlingDeepLink = false;
+                        console.log('❌ [LoginScreen] No token in URL');
+                        showStyledAlert('Invalid Link', 'The password reset link is missing the token. Please try requesting a new password reset email.');
                     }
-                } else {
-                    console.log('ℹ️ [LoginScreen] Not a reset-password link');
+                } catch (error) {
+                    console.error('❌ [LoginScreen] Error parsing deep link:', error);
+                    showStyledAlert('Error', 'There was an error processing the password reset link.');
                 }
-            } catch (error) {
-                console.error('❌ [LoginScreen] Error parsing deep link:', error);
-                showStyledAlert('Error', 'There was an error processing the link. Please try again.');
-                isHandlingDeepLink = false;
+            } else {
+                console.log('❌ [LoginScreen] Not a reset-password link');
             }
         };
 
-        // Check initial URL first (for cold starts)
+        const subscription = Linking.addEventListener('url', handleDeepLink);
+
         Linking.getInitialURL().then(url => {
             if (url) {
-                console.log('🔗 [LoginScreen] Initial URL detected (cold start):', url);
+                console.log('🔗 [LoginScreen] Initial deep link detected (cold start):', url);
                 handleDeepLink({ url });
             } else {
-                console.log('ℹ️ [LoginScreen] No initial URL, checking session...');
-                // Only check session if no deep link is present
-                checkSession();
+                console.log('ℹ️ [LoginScreen] No initial deep link (normal app launch)');
             }
         }).catch(err => {
             console.error('❌ [LoginScreen] Error getting initial URL:', err);
-            checkSession();
         });
-
-        // Listen for deep links while app is running
-        const subscription = Linking.addEventListener('url', handleDeepLink);
 
         return () => {
             subscription.remove();
+            unsubscribeFocus();
         };
     }, [navigation]);
 
     const checkSession = async () => {
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session && !isLoggingIn.current) {
-                navigation.replace('Main');
-            }
-        } catch (error) {
-            console.error('Session check error:', error);
-        }
-    };
-
-    const handlePasswordReset = async () => {
-        console.log('=== PASSWORD RESET STARTED ===');
-        console.log('Email entered:', email);
-        
-        if (!email) {
-            console.log('❌ No email provided');
-            showStyledAlert('Email Required', 'Please enter your email first to reset your password');
+        // Skip if already navigating or logging in
+        if (isNavigating.current || isLoggingIn.current) {
+            console.log('ℹ️ Already navigating or logging in, skipping session check');
             return;
         }
 
-        setResetLoading(true);
         try {
-            console.log('📧 Sending password reset email to:', email);
-            console.log('📧 Redirect URL:', 'scanwizard://reset-password');
-            
-            // Important: Don't include query parameters here - Supabase will add the token
-            const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: 'scanwizard://reset-password'
-            });
-            
+            console.log('🔍 Checking for existing session...');
+            const { data: { session }, error } = await supabase.auth.getSession();
+
             if (error) {
-                console.error('❌ Reset password error:', error);
-                throw error;
+                console.log('ℹ️ Session check error:', error.message);
+                return;
             }
 
-            console.log('✅ Password reset email sent successfully');
-            showStyledAlert(
-                'Reset Link Sent! 📧',
-                'A password reset link has been sent to your email. Please check your inbox and click the link to reset your password.',
-                () => setStyledAlertVisible(false)
-            );
-        } catch (error: any) {
-            console.error('❌ Password reset exception:', error);
-            console.error('Error message:', error?.message);
-            console.error('Error details:', JSON.stringify(error, null, 2));
-            
-            let errorMessage = error?.message || 'An unknown error occurred';
-            
-            // Provide more helpful error messages
-            if (errorMessage.includes('Invalid email')) {
-                errorMessage = 'The email address is invalid. Please check and try again.';
-            } else if (errorMessage.includes('User not found')) {
-                errorMessage = 'This email is not registered. Please sign up first.';
-            } else if (errorMessage.includes('over_email_send_rate_limit')) {
-                errorMessage = 'Too many reset emails sent. Please try again later.';
+            if (session) {
+                console.log('✅ Active session found, navigating to Main');
+                isNavigating.current = true;
+                navigation.replace('Main');
+            } else {
+                console.log('ℹ️ No active session, staying on Login screen');
             }
-            
-            showStyledAlert('Reset Failed ❌', errorMessage);
-        } finally {
-            setResetLoading(false);
-            console.log('=== PASSWORD RESET COMPLETED ===\n');
+        } catch (error) {
+            console.error('❌ Session check error:', error);
         }
     };
 
@@ -276,12 +217,15 @@ export default function LoginScreen({ navigation }: Props) {
     };
 
     const handleLogin = async () => {
+        console.log('🔐 Login attempt started');
+
         if (!email || !password) {
             showStyledAlert('Missing Information', 'Please fill in both email and password');
             return;
         }
 
         if (isLoggingIn.current || loginLoading) {
+            console.log('⚠️ Login already in progress, skipping');
             return;
         }
 
@@ -290,12 +234,15 @@ export default function LoginScreen({ navigation }: Props) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
+            console.log('📧 Attempting login with email:', email.trim().toLowerCase());
+
             const { data, error } = await supabase.auth.signInWithPassword({
                 email: email.trim().toLowerCase(),
                 password,
             });
 
             if (error) {
+                console.error('❌ Login error:', error.message);
                 let errorMessage = error.message;
                 let alertTitle = 'Login Failed';
 
@@ -348,13 +295,20 @@ export default function LoginScreen({ navigation }: Props) {
             }
 
             // Login successful
+            console.log('✅ Login successful');
             if (data.session) {
+                console.log('✅ Session created successfully');
+                // Set navigation flag BEFORE checking admin
+                isNavigating.current = true;
+
                 const isAdmin = await verifyAdmin();
+                console.log('👤 User is admin:', isAdmin);
 
                 showStyledAlert(
                     "Welcome Back! 🎉",
                     "You've successfully logged in to your account.",
                     () => {
+                        console.log('User pressed OK, navigating to Main');
                         setStyledAlertVisible(false);
                         setTimeout(() => {
                             navigation.replace('Main');
@@ -374,17 +328,25 @@ export default function LoginScreen({ navigation }: Props) {
             }
 
         } catch (error: any) {
-            console.error('Login error:', error);
-        } finally {
-            setLoginLoading(false);
+            console.error('❌ Login exception:', error);
+            // Ensure guards are reset on error
+            isNavigating.current = false;
             isLoggingIn.current = false;
+            setLoginLoading(false);
+        } finally {
+            // Only reset loading state if not navigating
+            if (!isNavigating.current) {
+                console.log('🔄 Resetting login state (not navigating)');
+                setLoginLoading(false);
+                isLoggingIn.current = false;
+            }
         }
     };
 
     const showStyledAlert = (title: string, message: string, onOk?: () => void) => {
         setStyledAlertTitle(title);
         setStyledAlertMessage(message);
-        setStyledAlertOnOk(() => onOk || null);
+        setStyledAlertOnOk(onOk || null);
         setStyledAlertVisible(true);
     };
 
@@ -480,18 +442,11 @@ export default function LoginScreen({ navigation }: Props) {
 
                         {/* Forgot Password */}
                         <TouchableOpacity
-                            style={[
-                                styles.forgotContainer,
-                                resetLoading && styles.forgotContainerDisabled
-                            ]}
-                            onPress={handlePasswordReset}
-                            disabled={loginLoading || googleLoading || resetLoading}
+                            style={styles.forgotContainer}
+                            onPress={() => navigation.navigate('ForgotPassword')}
+                            disabled={loginLoading || googleLoading}
                         >
-                            {resetLoading ? (
-                                <ActivityIndicator size="small" color="#007AFF" />
-                            ) : (
-                                <Text style={styles.forgotText}>Forgot Password?</Text>
-                            )}
+                            <Text style={styles.forgotText}>Forgot Password?</Text>
                         </TouchableOpacity>
 
                         {/* Login Button */}

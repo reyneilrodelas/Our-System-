@@ -12,6 +12,7 @@ import { RootStackParamList, HomeStackParamList, TabParamList, StoreOwnerStackPa
 // Screens
 import LoginScreen from './src/screens/auth/LoginScreen';
 import SignupScreen from './src/screens/auth/SignupScreen';
+import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import HomeScreen from './src/screens/shared/HomeScreen';
 import ScannerScreen from './src/screens/shared/scanner';
@@ -211,6 +212,7 @@ function RootNavigator() {
       {/* Auth screens */}
       <RootStack.Screen name="Login" component={LoginScreen} />
       <RootStack.Screen name="Signup" component={SignupScreen} />
+      <RootStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
       <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
 
       {/* Main app screens */}

@@ -59,53 +59,59 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
     const checkAuthSession = async () => {
         try {
-            // Check if this is a recovery flow (from password reset email link)
+            console.log('🔐 [ResetPassword] Checking auth session...');
+            console.log('🔐 [ResetPassword] Recovery token present:', !!recoveryToken);
+            console.log('🔐 [ResetPassword] Recovery type:', recoveryType);
+
+            // If this is a recovery flow, we expect a valid session to already be set
             if (recoveryToken && recoveryType === 'recovery') {
+                console.log('✅ [ResetPassword] Recovery flow detected');
+
+                // Verify we have a valid session
+                const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+                if (sessionError || !session) {
+                    console.error('❌ [ResetPassword] No valid session for recovery:', sessionError);
+                    throw new Error('Invalid or expired password reset link. Please request a new one.');
+                }
+
+                console.log('✅ [ResetPassword] Valid recovery session found for:', session.user.email);
                 setIsRecoveryFlow(true);
                 setCheckingSession(false);
                 return;
             }
 
-            // First check if there's an active session
+            // For regular password change (user is logged in), check for active session
             const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
             if (sessionError) {
-                console.error('Error checking session:', sessionError);
+                console.error('❌ [ResetPassword] Session error:', sessionError);
                 throw new Error('Unable to verify session');
             }
 
             if (!session) {
-                // Try to refresh the session
+                console.log('❌ [ResetPassword] No session found, trying refresh...');
+
                 const { data: { session: refreshedSession }, error: refreshError } =
                     await supabase.auth.refreshSession();
 
-                if (refreshError) {
-                    console.error('Error refreshing session:', refreshError);
-                    throw new Error('Session refresh failed');
-                }
-
-                if (!refreshedSession) {
+                if (refreshError || !refreshedSession) {
+                    console.error('❌ [ResetPassword] Refresh failed:', refreshError);
                     throw new Error('No valid session found');
                 }
+
+                console.log('✅ [ResetPassword] Session refreshed');
             }
 
-            // Check if the user has reset password capabilities
-            const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-            if (userError || !user) {
-                console.error('Error getting user:', userError);
-                throw new Error('Unable to verify user');
-            }
-
-            // Session is valid, user can proceed
+            console.log('✅ [ResetPassword] Valid session confirmed');
             setCheckingSession(false);
+
         } catch (error: any) {
-            console.error('Auth session error:', error);
+            console.error('❌ [ResetPassword] Auth session error:', error);
             showStyledAlert(
                 'Session Error',
-                'Your password reset link has expired or is invalid. Please request a new password reset link.',
+                error.message || 'Your password reset link has expired or is invalid. Please request a new password reset link.',
                 () => {
-                    // Clear any existing session
                     supabase.auth.signOut().finally(() => {
                         navigation.replace('Login');
                     });
@@ -167,75 +173,109 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
         }
     };
 
+    // Replace the handleResetPasswordRecovery function in ResetPasswordScreen with this:
+
     const handleResetPasswordRecovery = async () => {
-        // For recovery flow, only ask for new password
+        console.log('=== PASSWORD RECOVERY STARTED ===');
+        console.log('Recovery token present:', !!recoveryToken);
+        console.log('Recovery type:', recoveryType);
+
+        // Validate inputs
         if (!newPassword.trim() || !confirmPassword.trim()) {
-            showStyledAlert('Error', 'Please fill in all fields');
+            console.log('❌ Missing password fields');
+            showStyledAlert('Error', 'Please fill in all password fields');
             return;
         }
 
         if (newPassword !== confirmPassword) {
-            showStyledAlert('Error', 'Passwords do not match');
+            console.log('❌ Passwords do not match');
+            showStyledAlert('Error', 'New password and confirmation password do not match');
             return;
         }
 
         // Validate password strength
         const validation = validatePassword(newPassword);
         if (!validation.isValid) {
+            console.log('❌ Password validation failed:', validation.error);
             showStyledAlert('Error', validation.error || 'Invalid password');
             return;
         }
 
         setLoading(true);
         try {
-            if (!recoveryToken) {
-                throw new Error('No recovery token provided. Please request a new password reset link.');
+            // First, verify we have an active session
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+            if (sessionError || !session) {
+                console.error('❌ No valid session found:', sessionError);
+                throw new Error('Your password reset link has expired. Please request a new one.');
             }
 
-            // Verify the recovery token with Supabase
-            const { data, error: verifyError } = await supabase.auth.verifyOtp({
-                token_hash: recoveryToken,
-                type: 'recovery',
-            });
+            console.log('✅ Valid session found, user:', session.user.email);
+            console.log('🔐 Updating password...');
 
-            if (verifyError) {
-                throw new Error('Invalid or expired recovery token. Please request a new password reset link.');
-            }
-
-            // Token verified, now update the password
-            const { error: updateError } = await supabase.auth.updateUser({
+            // Update the password
+            const { data, error: updateError } = await supabase.auth.updateUser({
                 password: newPassword
             });
 
             if (updateError) {
+                console.error('❌ Password update failed:', updateError);
+
+                // Check for specific error types
+                if (updateError.message?.includes('session')) {
+                    throw new Error('Your session has expired. Please request a new password reset link.');
+                }
                 throw updateError;
             }
+
+            console.log('✅ Password updated successfully!');
 
             // Clear form
             setNewPassword('');
             setConfirmPassword('');
 
+            // Show success message
             showStyledAlert(
-                'Success',
-                'Your password has been reset successfully. Please log in with your new password.',
+                'Success! 🎉',
+                'Your password has been changed successfully. You can now log in with your new password.',
                 () => {
-                    // Sign out the user and clear the session
+                    // Sign out to clear the recovery session
                     supabase.auth.signOut().finally(() => {
                         navigation.replace('Login');
                     });
                 }
             );
+
         } catch (error: any) {
-            console.error('Password reset error:', error);
+            console.error('❌ Password recovery exception:', error);
+            console.error('Error details:', JSON.stringify(error, null, 2));
+
             let errorMessage = 'Failed to reset password. Please try again.';
+            let shouldRedirect = false;
 
             if (error.message) {
                 errorMessage = error.message;
+
+                // Check if we should redirect to login
+                if (error.message.includes('expired') ||
+                    error.message.includes('invalid') ||
+                    error.message.includes('session')) {
+                    shouldRedirect = true;
+                }
             }
 
-            showStyledAlert('Error', errorMessage);
+            showStyledAlert('Error', errorMessage, () => {
+                if (shouldRedirect) {
+                    supabase.auth.signOut().finally(() => {
+                        navigation.replace('Login');
+                    });
+                }
+            });
+
         } finally {
             setLoading(false);
+            console.log('=== PASSWORD RECOVERY COMPLETED ===\n');
         }
     };
 

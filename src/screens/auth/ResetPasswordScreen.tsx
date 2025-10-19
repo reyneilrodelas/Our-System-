@@ -11,6 +11,7 @@ import {
     ScrollView,
     Animated,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../../lib/supabase';
 import { RootStackParamList } from '../../types/navigation';
@@ -77,6 +78,11 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
     const handleAlertClose = () => {
         setStyledAlertVisible(false);
+        // Call the onOk callback if it exists
+        if (alertOnOk) {
+            alertOnOk();
+            setAlertOnOk(undefined);
+        }
     };
 
     const validatePassword = (password: string): { isValid: boolean; error?: string } => {
@@ -163,50 +169,65 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
             console.log('Updating password...');
 
-            const updatePromise = supabase.auth.updateUser({
+            const { data: updateData, error: updateError } = await supabase.auth.updateUser({
                 password: newPassword
             });
 
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Password update timeout')), 10000)
-            );
-
-            try {
-                await Promise.race([updatePromise, timeoutPromise]);
-            } catch (updateError: any) {
-                if (updateError?.message === 'Password update timeout') {
-                    console.warn('⚠️ Password update timeout - continuing anyway');
-                } else {
-                    console.error('❌ Password update failed:', updateError?.message);
-                    throw new Error(updateError?.message || 'Failed to update password');
-                }
+            if (updateError) {
+                console.error('❌ Password update failed:', updateError);
+                throw new Error(updateError.message || 'Failed to update password');
             }
 
+            console.log('✅ Password updated successfully!', updateData);
+
+            console.log('✅ Password reset successful!');
+
+            console.log('Clearing recovery session...');
+            // Clear the session completely to force login with new password
+            // Use 'local' scope first to clear just the current session (faster)
+            try {
+                const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
+                if (signOutError) {
+                    console.error('Sign out error:', signOutError);
+                } else {
+                    console.log('✅ Session cleared successfully');
+                }
+            } catch (e) {
+                console.error('Error during sign out:', e);
+            }
+            
+            // Clear AsyncStorage to ensure no cached session data (do this in background)
+            AsyncStorage.getAllKeys()
+                .then(keys => {
+                    const supabaseKeys = keys.filter(key => key.includes('supabase') || key.includes('auth'));
+                    if (supabaseKeys.length > 0) {
+                        return AsyncStorage.multiRemove(supabaseKeys);
+                    }
+                })
+                .then(() => console.log('✅ Cleared async storage'))
+                .catch(e => console.error('Error clearing AsyncStorage:', e));
+
+            // Clear form fields
             setResetToken('');
             setEmail('');
             setNewPassword('');
             setConfirmPassword('');
 
-            console.log('✅ Password reset successful!');
-
-            console.log('Clearing recovery session...');
-            try {
-                await supabase.auth.signOut();
-                console.log('✅ Session cleared');
-            } catch (signOutError) {
-                console.log('⚠️ Sign out error (non-critical):', signOutError);
-            }
-
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
             showStyledAlert(
                 'Success! ✅',
-                'Your password has been reset successfully. You can now sign in with your new password.',
+                'Your password has been reset successfully. Please sign in with your new password.',
                 () => {
                     console.log('User pressed OK, redirecting to Login screen');
-                    navigation.replace('Login');
+                    // Navigate to login and reset the navigation stack
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'Login' }],
+                    });
                 }
             );
+            console.log('=== PASSWORD RESET COMPLETED ===\n');
         } catch (error: any) {
             console.error('❌ Password reset exception:', error);
             console.error('Full error:', JSON.stringify(error, null, 2));
@@ -226,9 +247,10 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
             showStyledAlert('Reset Failed ❌', errorMessage);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        } finally {
-            setLoading(false);
             console.log('=== PASSWORD RESET COMPLETED ===\n');
+        } finally {
+            // Always set loading to false, whether success or error
+            setLoading(false);
         }
     };
 

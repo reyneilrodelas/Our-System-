@@ -52,11 +52,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         initSession();
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            console.log('Auth state changed - Event:', _event, 'Session exists:', !!session);
+            
             if (session) {
                 setSession(session);
                 setUser(session.user);
                 await fetchUserProfile(session.user.id);
             } else {
+                console.log('Clearing session data');
                 setSession(null);
                 setUser(null);
                 setProfile(null);

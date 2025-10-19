@@ -159,9 +159,7 @@ export default function AssignProductScreen() {
     };
 
     // Optimized toggle function using useCallback
-    const toggleProductSelection = useCallback((barcode: string, isAssigned: boolean) => {
-        if (isAssigned) return;
-
+    const toggleProductSelection = useCallback((barcode: string) => {
         setSelectedProducts(prev => {
             const newSet = new Set(prev);
             if (newSet.has(barcode)) {
@@ -358,23 +356,21 @@ export default function AssignProductScreen() {
                             style={[
                                 styles.productItemContainer,
                                 selectedProducts.has(product.barcode) && styles.selectedProduct,
-                                product.isAssigned && styles.assignedProduct
+                                product.isAssigned && !selectedProducts.has(product.barcode) && styles.assignedProduct
                             ]}
                         >
                             <TouchableOpacity
                                 style={styles.productContent}
-                                onPress={() => toggleProductSelection(product.barcode, product.isAssigned)}
-                                activeOpacity={product.isAssigned ? 1 : 0.7}
-                                disabled={product.isAssigned}
+                                onPress={() => toggleProductSelection(product.barcode)}
+                                activeOpacity={0.7}
                             >
                                 <Checkbox
                                     status={
-                                        product.isAssigned ? 'checked' :
+                                        product.isAssigned && !selectedProducts.has(product.barcode) ? 'checked' :
                                             selectedProducts.has(product.barcode) ? 'checked' : 'unchecked'
                                     }
-                                    color="#6c5ce7"
+                                    color={product.isAssigned && !selectedProducts.has(product.barcode) ? '#00b894' : '#6c5ce7'}
                                     uncheckedColor="#636e72"
-                                    disabled={product.isAssigned}
                                 />
                                 <View style={styles.productInfo}>
                                     <Text style={[styles.productName, product.isAssigned && styles.assignedText]}>
@@ -607,7 +603,6 @@ const styles = StyleSheet.create({
     },
     assignedProduct: {
         backgroundColor: '#f5f5f5',
-        opacity: 0.7,
     },
     productName: {
         fontSize: 16,

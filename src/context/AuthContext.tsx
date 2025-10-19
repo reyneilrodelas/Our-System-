@@ -53,7 +53,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
             console.log('Auth state changed - Event:', _event, 'Session exists:', !!session);
-            
+
+            // CRITICAL: Ignore PASSWORD_RECOVERY and USER_UPDATED events during password reset
+            // The ResetPasswordScreen will handle the navigation after password update
+            if (_event === 'PASSWORD_RECOVERY' || _event === 'USER_UPDATED') {
+                console.log('⚠️ Ignoring', _event, 'event - handled by ResetPasswordScreen');
+                return;
+            }
+
             if (session) {
                 setSession(session);
                 setUser(session.user);

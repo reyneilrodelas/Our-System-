@@ -195,7 +195,7 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
             } catch (e) {
                 console.error('Error during sign out:', e);
             }
-            
+
             // Clear AsyncStorage to ensure no cached session data (do this in background)
             AsyncStorage.getAllKeys()
                 .then(keys => {
@@ -212,6 +212,9 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
             setEmail('');
             setNewPassword('');
             setConfirmPassword('');
+
+            // Stop loading before showing alert
+            setLoading(false);
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 

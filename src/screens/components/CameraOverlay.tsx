@@ -9,6 +9,7 @@ import {
     Easing
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons'; 
 
 const { width, height } = Dimensions.get('window');
 
@@ -189,7 +190,7 @@ export const CameraOverlay: React.FC<CameraOverlayProps> = ({
             {/* Clean status display */}
             <View style={styles.statusArea}>
                 <View style={styles.statusContainer}>
-                    <MaterialIcons name="qr-code-scanner" size={18} color="#4A90E2" />
+                    <MaterialCommunityIcons name="barcode-scan" size={24} color="#4A90E2" />
                     <Text style={styles.statusText}>{scanStatus}</Text>
                 </View>
             </View>

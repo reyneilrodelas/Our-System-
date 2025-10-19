@@ -31,12 +31,14 @@ export default function ManageProductScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [saving, setSaving] = useState<string | null>(null);
+    const [savingAll, setSavingAll] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [alertVisible, setAlertVisible] = useState(false);
     const [alertTitle, setAlertTitle] = useState('');
     const [alertMessage, setAlertMessage] = useState('');
     const [alertCallback, setAlertCallback] = useState<(() => void) | undefined>();
+    const [hasChanges, setHasChanges] = useState(false);
 
     // Filter products based on search query
     useEffect(() => {
@@ -91,6 +93,7 @@ export default function ManageProductScreen() {
 
             setAssignedProducts(productsWithDetails);
             setFilteredProducts(productsWithDetails);
+            setHasChanges(false);
         } catch (error) {
             console.error('Error fetching assigned products:', error);
             showAlert('Error', 'Failed to fetch assigned products. Please try again.');
@@ -129,11 +132,43 @@ export default function ManageProductScreen() {
             if (error) throw error;
 
             showAlert('Success', 'Product details updated successfully!');
+            setHasChanges(false);
         } catch (error) {
             console.error('Error saving product:', error);
             showAlert('Error', 'Failed to update product details.');
         } finally {
             setSaving(null);
+        }
+    };
+
+    const handleSaveAll = async () => {
+        setSavingAll(true);
+        try {
+            // Prepare all updates
+            const updates = assignedProducts.map(product => ({
+                store_id: storeId,
+                product_barcode: product.barcode,
+                price: product.price,
+                stock: product.stock,
+                availability: product.availability
+            }));
+
+            // Use upsert to update all products at once
+            const { error } = await supabase
+                .from('store_products')
+                .upsert(updates, {
+                    onConflict: 'store_id,product_barcode'
+                });
+
+            if (error) throw error;
+
+            setHasChanges(false);
+            showAlert('Success', `Successfully updated ${assignedProducts.length} product(s)!`);
+        } catch (error) {
+            console.error('Error saving all products:', error);
+            showAlert('Error', 'Failed to update all products. Please try again.');
+        } finally {
+            setSavingAll(false);
         }
     };
 
@@ -176,6 +211,7 @@ export default function ManageProductScreen() {
             return product;
         });
         setAssignedProducts(updatedProducts);
+        setHasChanges(true);
     };
 
     // Helper function to handle text input with zero removal
@@ -240,9 +276,37 @@ export default function ManageProductScreen() {
                         <Text style={styles.headerTitle}>Manage Store Products</Text>
                         <Text style={styles.headerSubtitle}>Update product details and availability</Text>
                     </View>
-
+                    <TouchableOpacity
+                        style={styles.refreshButton}
+                        onPress={handleRefresh}
+                        disabled={refreshing}
+                    >
+                        <Ionicons name="refresh" size={24} color="white" />
+                    </TouchableOpacity>
                 </View>
             </LinearGradient>
+
+            {/* Save All Button */}
+            {filteredProducts.length > 0 && (
+                <View style={styles.saveAllContainer}>
+                    <TouchableOpacity
+                        style={[styles.saveAllButton, !hasChanges && styles.saveAllButtonDisabled]}
+                        onPress={handleSaveAll}
+                        disabled={savingAll || !hasChanges}
+                    >
+                        {savingAll ? (
+                            <ActivityIndicator color="white" size="small" />
+                        ) : (
+                            <>
+                                <Ionicons name="save-outline" size={20} color="white" />
+                                <Text style={styles.saveAllButtonText}>
+                                    Save All Changes {hasChanges ? `(${assignedProducts.length})` : ''}
+                                </Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {/* Search Bar */}
             <View style={styles.searchWrapper}>
@@ -420,6 +484,34 @@ const styles = StyleSheet.create({
     },
     refreshButton: {
         padding: 8,
+    },
+    saveAllContainer: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        backgroundColor: '#f5f6fa',
+    },
+    saveAllButton: {
+        backgroundColor: '#00b894',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 15,
+        borderRadius: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+        elevation: 4,
+    },
+    saveAllButtonDisabled: {
+        backgroundColor: '#b2bec3',
+        opacity: 0.6,
+    },
+    saveAllButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
+        marginLeft: 8,
     },
     searchWrapper: {
         paddingHorizontal: 20,

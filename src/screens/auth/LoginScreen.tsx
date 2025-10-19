@@ -329,17 +329,17 @@ export default function LoginScreen({ navigation }: Props) {
 
         } catch (error: any) {
             console.error('❌ Login exception:', error);
-            // Ensure guards are reset on error
+            // Reset states on error
             isNavigating.current = false;
             isLoggingIn.current = false;
             setLoginLoading(false);
         } finally {
-            // Only reset loading state if not navigating
-            if (!isNavigating.current) {
-                console.log('🔄 Resetting login state (not navigating)');
-                setLoginLoading(false);
-                isLoggingIn.current = false;
-            }
+            // FIXED: Always reset loading state in finally block
+            // The navigation guard should only prevent duplicate navigations,
+            // not prevent UI cleanup
+            console.log('🔄 Resetting login state in finally block');
+            setLoginLoading(false);
+            isLoggingIn.current = false;
         }
     };
 

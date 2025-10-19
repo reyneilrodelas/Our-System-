@@ -153,24 +153,49 @@ export default function ResultScreen({ route }: any) {
                             console.warn('Location permission denied');
                             return null;
                         }
-                        
-                        // Set timeout for location fetch (5 seconds max)
-                        const locationPromiseWithTimeout = Promise.race([
-                            Location.getCurrentPositionAsync({
-                                accuracy: Location.Accuracy.Balanced,
-                            }),
-                            new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('Location timeout')), 5000)
-                            ),
-                        ]);
 
-                        const location = await locationPromiseWithTimeout as any;
-                        const newLocation = {
-                            latitude: location.coords.latitude,
-                            longitude: location.coords.longitude,
-                        };
-                        setUserLocation(newLocation);
-                        return newLocation;
+                        // Try to get last known position first (instant, cached)
+                        const lastKnown = await Location.getLastKnownPositionAsync();
+                        if (lastKnown) {
+                            const cachedLocation = {
+                                latitude: lastKnown.coords.latitude,
+                                longitude: lastKnown.coords.longitude,
+                            };
+                            setUserLocation(cachedLocation);
+                            // Continue to get fresh location in background
+                            Location.getCurrentPositionAsync({
+                                accuracy: Location.Accuracy.Low,
+                            }).then((freshLocation) => {
+                                setUserLocation({
+                                    latitude: freshLocation.coords.latitude,
+                                    longitude: freshLocation.coords.longitude,
+                                });
+                            }).catch(() => { });
+                            return cachedLocation;
+                        }
+
+                        // Try with low accuracy first (faster)
+                        try {
+                            const locationPromiseWithTimeout = Promise.race([
+                                Location.getCurrentPositionAsync({
+                                    accuracy: Location.Accuracy.Low,
+                                }),
+                                new Promise((_, reject) =>
+                                    setTimeout(() => reject(new Error('Location timeout')), 15000)
+                                ),
+                            ]);
+
+                            const location = await locationPromiseWithTimeout as any;
+                            const newLocation = {
+                                latitude: location.coords.latitude,
+                                longitude: location.coords.longitude,
+                            };
+                            setUserLocation(newLocation);
+                            return newLocation;
+                        } catch (timeoutError) {
+                            console.warn('Location timeout, continuing without location');
+                            return null;
+                        }
                     } catch (error) {
                         console.error('Location error:', error);
                         return null;

@@ -25,6 +25,7 @@ import { debounce } from 'lodash';
 
 type UserProfile = {
     username: string;
+    full_name?: string;
     email: string;
     address: string;
     avatar_url?: string;
@@ -224,14 +225,15 @@ export default function ProfileScreen() {
 
             const { data, error: profileError } = await supabase
                 .from('profiles')
-                .select('username, address, avatar_url, is_admin')
+                .select('username, full_name, address, avatar_url, is_admin')
                 .eq('id', user.id)
                 .single();
 
             if (profileError) throw profileError;
 
             const profileData = {
-                username: data.username || 'User',
+                username: data.username || data.full_name || 'User',
+                full_name: data.full_name,
                 email: user.email || '',
                 address: data.address || 'No address provided',
                 avatar_url: data.avatar_url,

@@ -77,6 +77,7 @@ const StoreDetailsScreen = () => {
     const [alertMessage, setAlertMessage] = useState('');
     const [imageViewerVisible, setImageViewerVisible] = useState(false);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
+    const [updating, setUpdating] = useState(false);
 
     useEffect(() => {
         const fetchStoreDetails = async () => {
@@ -89,25 +90,22 @@ const StoreDetailsScreen = () => {
 
                 if (error) throw error;
                 setStore(data);
-                setEditForm({
-                    name: data.name,
-                    address: data.address,
-                    description: data.description || '',
-                    image: data.image_url || null,
-                    permitImages: data.permit_images || []
-                });
 
+                // Get public URL for store image
+                let storeImageUrl = null;
                 if (data.image_url) {
                     const { data: imageData } = await supabase
                         .storage
                         .from('store-images')
                         .getPublicUrl(data.image_url);
-                    setImageUrl(imageData.publicUrl);
+                    storeImageUrl = imageData.publicUrl;
+                    setImageUrl(storeImageUrl);
                 }
 
-                // Load multiple permit images
+                // Load multiple permit images and get their public URLs
+                let permitUrls: string[] = [];
                 if (data.permit_images && Array.isArray(data.permit_images)) {
-                    const permitUrls = await Promise.all(
+                    permitUrls = await Promise.all(
                         data.permit_images.map(async (permitPath: string) => {
                             const { data: permitData } = await supabase
                                 .storage
@@ -118,6 +116,15 @@ const StoreDetailsScreen = () => {
                     );
                     setPermitImageUrls(permitUrls);
                 }
+
+                // Set edit form with public URLs for display
+                setEditForm({
+                    name: data.name,
+                    address: data.address,
+                    description: data.description || '',
+                    image: storeImageUrl || null,
+                    permitImages: permitUrls
+                });
             } catch (error) {
                 console.error(error);
             } finally {
@@ -236,6 +243,10 @@ const StoreDetailsScreen = () => {
             return;
         }
 
+        // Prevent multiple submissions
+        if (updating) return;
+        setUpdating(true);
+
         let updatedFields: {
             name: string;
             address: string;
@@ -249,8 +260,8 @@ const StoreDetailsScreen = () => {
         };
 
         try {
-            // Upload store image
-            if (editForm.image && editForm.image !== store.image_url) {
+            // Upload store image (only if it's a new local file)
+            if (editForm.image && (editForm.image.startsWith('file://') || editForm.image.startsWith('content://'))) {
                 const fileName = await uploadImage(editForm.image);
                 if (!fileName) throw new Error('Failed to get uploaded file name');
                 updatedFields.image_url = fileName;
@@ -265,6 +276,7 @@ const StoreDetailsScreen = () => {
                 if (permitUri.startsWith('file://') || permitUri.startsWith('content://')) {
                     return await uploadImage(permitUri);
                 } else {
+                    // It's an existing image URL, find the corresponding storage path
                     const existingFileName = existingPermits.find(path =>
                         permitUri.includes(path)
                     );
@@ -291,22 +303,33 @@ const StoreDetailsScreen = () => {
 
             // Update local state immediately
             setStore({ ...store, ...updatedFields });
+            
+            // Close modal first
             setEditModalVisible(false);
 
-            // Show success message immediately (no wait for image URLs)
-            setAlertTitle('Success');
-            setAlertMessage('Store updated successfully');
-            setAlertVisible(true);
-
-            // Fetch image URLs in background (don't await - let it happen asynchronously)
-            updateImageUrlsInBackground(updatedFields);
-
-            // Update cache in background
+            // Update cache in background (don't await)
             if (user) {
-                updateStoreInCache(updatedFields);
+                updateStoreInCache(updatedFields).catch(err => 
+                    console.error('Cache update failed:', err)
+                );
             }
+
+            // Fetch image URLs in background (don't await)
+            updateImageUrlsInBackground(updatedFields).catch(err =>
+                console.error('Image URL update failed:', err)
+            );
+
+            // Show success message after a short delay to ensure modal is closed
+            setTimeout(() => {
+                setAlertTitle('Success');
+                setAlertMessage('Store updated successfully');
+                setAlertVisible(true);
+                setUpdating(false);
+            }, 300);
+
         } catch (err: any) {
             console.error('Store update error:', err);
+            setUpdating(false);
             setAlertTitle('Error');
             setAlertMessage(err.message || 'Failed to update store. Please try again.');
             setAlertVisible(true);
@@ -741,6 +764,7 @@ const StoreDetailsScreen = () => {
                             <Pressable
                                 style={[styles.modalButton, styles.cancelButton]}
                                 onPress={() => setEditModalVisible(false)}
+                                disabled={updating}
                             >
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </Pressable>
@@ -748,12 +772,19 @@ const StoreDetailsScreen = () => {
                                 style={[
                                     styles.modalButton,
                                     styles.saveButton,
-                                    (!editForm.name || !editForm.address) && styles.disabledButton
+                                    ((!editForm.name || !editForm.address) || updating) && styles.disabledButton
                                 ]}
                                 onPress={handleUpdateStore}
-                                disabled={!editForm.name || !editForm.address}
+                                disabled={!editForm.name || !editForm.address || updating}
                             >
-                                <Text style={styles.saveButtonText}>Save Changes</Text>
+                                {updating ? (
+                                    <View style={styles.loadingButtonContent}>
+                                        <ActivityIndicator size="small" color="#fff" />
+                                        <Text style={styles.saveButtonText}>Saving...</Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                                )}
                             </Pressable>
                         </View>
                     </View>
@@ -1329,6 +1360,11 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '700',
         color: '#fff',
+    },
+    loadingButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
     },
     disabledButton: {
         backgroundColor: '#b2bec3',

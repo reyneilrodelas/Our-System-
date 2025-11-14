@@ -122,14 +122,14 @@ export default function AddProductScreen() {
 
     const checkProductExists = async (barcode: string): Promise<boolean> => {
         try {
+            // Optimized: Use maybeSingle() instead of single() to avoid error handling
             const { data, error } = await supabase
                 .from('products')
-                .select('id, name')
+                .select('barcode')
                 .eq('barcode', barcode.trim())
-                .single();
+                .maybeSingle();
 
-            if (error && error.code !== 'PGRST116') {
-                // PGRST116 is "not found" error, which is expected
+            if (error) {
                 console.error('Error checking product:', error);
                 return false;
             }

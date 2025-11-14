@@ -97,25 +97,6 @@ export default function Signup({ navigation }: SignupScreenProps) {
         return unmet ? unmet.text + ' is required' : null;
     };
 
-    const checkEmailExists = async (email: string): Promise<boolean> => {
-        try {
-            // Use Supabase Auth's signIn method to check if email exists
-            const { data, error } = await supabase.auth.signInWithOtp({
-                email,
-                options: {
-                    // This will fail if email doesn't exist, but we don't want to send OTP
-                    shouldCreateUser: false
-                }
-            });
-
-            // If no error, email exists
-            return !error;
-        } catch (error) {
-            // If there's an error, likely email doesn't exist
-            return false;
-        }
-    };
-
     const handleSignup = async () => {
         setLoading(true);
         try {
@@ -136,17 +117,7 @@ export default function Signup({ navigation }: SignupScreenProps) {
                 return;
             }
 
-            // ✅ Check if email exists using the new method
-            const emailExists = await checkEmailExists(email);
-            if (emailExists) {
-                setAlertTitle('Email Already Registered');
-                setAlertMessage('This email is already registered. Please sign in instead.');
-                setAlertVisible(true);
-                setLoading(false);
-                return;
-            }
-
-            // ✅ Proceed to sign up new user
+            // ✅ Proceed to sign up new user (Supabase will handle duplicate email check)
             const { data: { user }, error: authError } = await supabase.auth.signUp({
                 email,
                 password,
@@ -178,15 +149,9 @@ export default function Signup({ navigation }: SignupScreenProps) {
                 throw new Error(authError.message || 'Authentication failed');
             }
 
-            // ✅ Create profile (if not existing)
-            const { data: existingProfile, error: fetchProfileError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('id', user?.id)
-                .single();
-
-            if (fetchProfileError && fetchProfileError.code !== 'PGRST116') {
-                throw new Error(fetchProfileError.message || 'Failed to fetch existing profile');
+            // ✅ User created successfully - let database trigger handle profile creation in background
+            if (user) {
+                console.log('✅ User created, ID:', user.id);
             }
 
             setAlertTitle('Welcome! 🎉');
@@ -200,17 +165,53 @@ export default function Signup({ navigation }: SignupScreenProps) {
 
             navigation.navigate('Login');
         } catch (error: any) {
-            console.error('Signup error:', error);
-
-            let errorMessage = 'Could not create account';
-            if (error.message) {
-                errorMessage = error.message;
-                if (error.message.includes('row-level security policy')) {
-                    errorMessage = 'Profile creation permission denied';
-                }
+            console.error('❌ Signup error:', error);
+            console.error('❌ Error name:', error?.name);
+            console.error('❌ Error message:', error?.message);
+            console.error('❌ Error stack:', error?.stack);
+            console.error('❌ Error type:', typeof error);
+            console.error('❌ Error constructor:', error?.constructor?.name);
+            
+            // Try different ways to get error info
+            if (error) {
+                console.error('❌ Error keys:', Object.keys(error));
+                console.error('❌ Error values:', Object.values(error));
+                console.error('❌ Error entries:', Object.entries(error));
+            }
+            
+            // Try to stringify
+            try {
+                console.error('❌ Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+            } catch (e) {
+                console.error('❌ Could not stringify error');
             }
 
-            setAlertTitle('Signup Failed');
+            let errorMessage = 'Could not create account';
+            let errorTitle = 'Signup Failed';
+            
+            if (error?.message) {
+                errorMessage = error.message;
+                
+                // Check for specific error types
+                if (error.message.includes('row-level security policy') || 
+                    error.message.includes('new row violates') ||
+                    error.message.includes('permission denied') ||
+                    error.message.includes('policy')) {
+                    errorTitle = 'Permission Error';
+                    errorMessage = 'Unable to create profile. Database permissions are not configured correctly. Please contact support.';
+                } else if (error.message.includes('Database error')) {
+                    errorTitle = 'Database Error';
+                    // Keep the detailed message
+                } else if (error.message.includes('duplicate key')) {
+                    errorTitle = 'Account Already Exists';
+                    errorMessage = 'An account with this email already exists. Please sign in instead.';
+                }
+            } else {
+                // No message property, try to extract info another way
+                errorMessage = 'An unexpected error occurred. Please try again.';
+            }
+
+            setAlertTitle(errorTitle);
             setAlertMessage(errorMessage);
             setAlertVisible(true);
         } finally {

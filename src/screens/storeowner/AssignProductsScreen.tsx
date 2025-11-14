@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
     View,
     Text,
     StyleSheet,
-    ScrollView,
+    FlatList,
     ActivityIndicator,
     TouchableOpacity,
     TextInput,
@@ -35,7 +35,7 @@ export default function AssignProductScreen() {
         category: string;
         isAssigned: boolean;
     }[]>([]);
-    const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+    const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,32 +61,34 @@ export default function AssignProductScreen() {
         setFilteredProducts(filtered);
     }, [searchQuery, productList]);
 
-    // Fetch available products and check assignment status
+    // Fetch available products and check assignment status with optimized single query
     const fetchProducts = async () => {
         setLoading(true);
         try {
-            // Fetch all products
-            const { data: products, error: productsError } = await supabase
-                .from('products')
-                .select('barcode, name, description, category')
-                .order('name', { ascending: true });
+            // Optimized: Use parallel queries for better performance
+            const [productsResult, assignedResult] = await Promise.all([
+                supabase
+                    .from('products')
+                    .select('barcode, name, description, category')
+                    .order('name', { ascending: true }),
+                supabase
+                    .from('store_products')
+                    .select('product_barcode')
+                    .eq('store_id', storeId)
+            ]);
 
-            if (productsError) throw productsError;
+            if (productsResult.error) throw productsResult.error;
+            if (assignedResult.error) throw assignedResult.error;
 
-            // Fetch already assigned products for this store
-            const { data: assignedProducts, error: assignedError } = await supabase
-                .from('store_products')
-                .select('product_barcode')
-                .eq('store_id', storeId);
-
-            if (assignedError) throw assignedError;
-
-            const assignedBarcodes = assignedProducts.map(p => p.product_barcode);
+            // Create a Set for O(1) lookup instead of array includes O(n)
+            const assignedBarcodesSet = new Set(
+                (assignedResult.data || []).map(p => p.product_barcode)
+            );
 
             // Merge products with assignment status
-            const mergedProducts = (products || []).map(product => ({
+            const mergedProducts = (productsResult.data || []).map(product => ({
                 ...product,
-                isAssigned: assignedBarcodes.includes(product.barcode)
+                isAssigned: assignedBarcodesSet.has(product.barcode)
             }));
 
             setProductList(mergedProducts);
@@ -117,7 +119,7 @@ export default function AssignProductScreen() {
     };
 
     const handleAssignProducts = async () => {
-        if (selectedProducts.size === 0) {
+        if (selectedProducts.length === 0) {
             showAlert('Selection Required', 'Please select at least one product to assign.');
             return;
         }
@@ -128,7 +130,7 @@ export default function AssignProductScreen() {
             const { error } = await supabase
                 .from('store_products')
                 .insert(
-                    Array.from(selectedProducts).map((barcode) => ({
+                    selectedProducts.map((barcode) => ({
                         store_id: storeId,
                         product_barcode: barcode,
                     }))
@@ -139,7 +141,7 @@ export default function AssignProductScreen() {
             // Update the product list to mark these as assigned
             setProductList(prev =>
                 prev.map(product =>
-                    selectedProducts.has(product.barcode)
+                    selectedProducts.includes(product.barcode)
                         ? { ...product, isAssigned: true }
                         : product
                 )
@@ -147,8 +149,8 @@ export default function AssignProductScreen() {
 
             showAlert(
                 'Success',
-                `${selectedProducts.size} product(s) assigned successfully!`,
-                () => setSelectedProducts(new Set())
+                `${selectedProducts.length} product(s) assigned successfully!`,
+                () => setSelectedProducts([])
             );
         } catch (error) {
             console.error('Error assigning products:', error);
@@ -161,13 +163,11 @@ export default function AssignProductScreen() {
     // Optimized toggle function using useCallback
     const toggleProductSelection = useCallback((barcode: string) => {
         setSelectedProducts(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(barcode)) {
-                newSet.delete(barcode);
+            if (prev.includes(barcode)) {
+                return prev.filter(b => b !== barcode);
             } else {
-                newSet.add(barcode);
+                return [...prev, barcode];
             }
-            return newSet;
         });
     }, []);
 
@@ -185,7 +185,7 @@ export default function AssignProductScreen() {
             };
         }
 
-        const selectedCount = availableBarcodes.filter(barcode => selectedProducts.has(barcode)).length;
+        const selectedCount = availableBarcodes.filter(barcode => selectedProducts.includes(barcode)).length;
         const allSelected = selectedCount === availableBarcodes.length;
         const someSelected = selectedCount > 0;
 
@@ -210,17 +210,14 @@ export default function AssignProductScreen() {
 
         if (status === 'checked') {
             // Deselect all
-            setSelectedProducts(prev => {
-                const newSet = new Set(prev);
-                availableBarcodes?.forEach(barcode => newSet.delete(barcode));
-                return newSet;
-            });
+            setSelectedProducts(prev => 
+                prev.filter(barcode => !availableBarcodes.includes(barcode))
+            );
         } else {
             // Select all available
             setSelectedProducts(prev => {
-                const newSet = new Set(prev);
-                availableBarcodes?.forEach(barcode => newSet.add(barcode));
-                return newSet;
+                const allBarcodes = [...new Set([...prev, ...availableBarcodes])];
+                return allBarcodes;
             });
         }
     }, [selectAllData]);
@@ -328,49 +325,33 @@ export default function AssignProductScreen() {
                 </View>
             )}
 
-            <ScrollView
-                contentContainerStyle={styles.scrollContainer}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={handleRefresh}
-                        colors={['#6c5ce7']}
-                        tintColor={'#6c5ce7'}
-                    />
-                }
-            >
-                {filteredProducts.length === 0 && !loading ? (
-                    <View style={styles.emptyState}>
-                        <Ionicons name="search" size={48} color="#b2bec3" />
-                        <Text style={styles.emptyText}>
-                            {searchQuery ? `No products found for "${searchQuery}"` : 'No products available'}
-                        </Text>
-                        <Text style={styles.emptySubText}>
-                            {searchQuery ? 'Try a different search term' : 'All products are already assigned to this store'}
-                        </Text>
-                    </View>
-                ) : (
-                    filteredProducts.map((product) => (
+            <FlatList
+                data={filteredProducts}
+                keyExtractor={(item) => `${item.barcode}-${selectedProducts.includes(item.barcode)}`}
+                renderItem={({ item: product }) => {
+                    const isSelected = selectedProducts.includes(product.barcode);
+                    return (
                         <View
-                            key={product.barcode}
                             style={[
                                 styles.productItemContainer,
-                                selectedProducts.has(product.barcode) && styles.selectedProduct,
-                                product.isAssigned && !selectedProducts.has(product.barcode) && styles.assignedProduct
+                                product.isAssigned && !isSelected && styles.assignedProduct,
+                                isSelected && styles.selectedProduct
                             ]}
                         >
                             <TouchableOpacity
                                 style={styles.productContent}
-                                onPress={() => toggleProductSelection(product.barcode)}
-                                activeOpacity={0.7}
+                                onPress={() => !product.isAssigned && toggleProductSelection(product.barcode)}
+                                activeOpacity={product.isAssigned ? 1 : 0.7}
+                                disabled={product.isAssigned}
                             >
                                 <Checkbox
                                     status={
-                                        product.isAssigned && !selectedProducts.has(product.barcode) ? 'checked' :
-                                            selectedProducts.has(product.barcode) ? 'checked' : 'unchecked'
+                                        product.isAssigned ? 'checked' :
+                                            isSelected ? 'checked' : 'unchecked'
                                     }
-                                    color={product.isAssigned && !selectedProducts.has(product.barcode) ? '#00b894' : '#6c5ce7'}
+                                    color={product.isAssigned ? '#00b894' : '#6c5ce7'}
                                     uncheckedColor="#636e72"
+                                    disabled={product.isAssigned}
                                 />
                                 <View style={styles.productInfo}>
                                     <Text style={[styles.productName, product.isAssigned && styles.assignedText]}>
@@ -398,19 +379,45 @@ export default function AssignProductScreen() {
                                 </View>
                             </TouchableOpacity>
                         </View>
-                    ))
-                )}
-            </ScrollView>
+                    );
+                }}
+                ListEmptyComponent={
+                    !loading ? (
+                        <View style={styles.emptyState}>
+                            <Ionicons name="search" size={48} color="#b2bec3" />
+                            <Text style={styles.emptyText}>
+                                {searchQuery ? `No products found for "${searchQuery}"` : 'No products available'}
+                            </Text>
+                            <Text style={styles.emptySubText}>
+                                {searchQuery ? 'Try a different search term' : 'All products are already assigned to this store'}
+                            </Text>
+                        </View>
+                    ) : null
+                }
+                contentContainerStyle={filteredProducts.length === 0 ? styles.emptyListContainer : styles.scrollContainer}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        colors={['#6c5ce7']}
+                        tintColor={'#6c5ce7'}
+                    />
+                }
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                updateCellsBatchingPeriod={50}
+            />
 
             <View style={styles.footer}>
                 <Text style={styles.selectionCount}>
-                    {selectedProducts.size} product{selectedProducts.size !== 1 ? 's' : ''} selected
+                    {selectedProducts.length} product{selectedProducts.length !== 1 ? 's' : ''} selected
                 </Text>
 
                 <TouchableOpacity
-                    style={[styles.assignButton, selectedProducts.size === 0 && styles.disabledButton]}
+                    style={[styles.assignButton, selectedProducts.length === 0 && styles.disabledButton]}
                     onPress={handleAssignProducts}
-                    disabled={selectedProducts.size === 0 || isSubmitting}
+                    disabled={selectedProducts.length === 0 || isSubmitting}
                 >
                     {isSubmitting ? (
                         <ActivityIndicator color="#fff" />
@@ -570,6 +577,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingBottom: 20,
         paddingTop: 10,
+    },
+    emptyListContainer: {
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        paddingTop: 10,
+        flexGrow: 1,
     },
     productItemContainer: {
         backgroundColor: '#fff',

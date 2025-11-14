@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo, useCallback } from 'react';
 import {
     View,
     Text,
     TextInput,
     StyleSheet,
-    ScrollView,
+    FlatList,
     TouchableOpacity,
     ActivityIndicator,
     Switch,
@@ -54,14 +54,24 @@ export default function ManageProductScreen() {
         }
     }, [searchQuery, assignedProducts]);
 
-    // Fetch assigned products and their details (price, stock, availability)
+    // Optimized: Fetch with single JOIN query instead of multiple queries
     const fetchAssignedProducts = async () => {
         setLoading(true);
         try {
-            // Fetch assigned products for this store from the store_products table
+            // Optimized single query with join to get all data at once
             const { data: storeProducts, error: storeProductsError } = await supabase
                 .from('store_products')
-                .select('product_barcode, price, stock, availability')
+                .select(`
+                    product_barcode,
+                    price,
+                    stock,
+                    availability,
+                    products!inner (
+                        barcode,
+                        name,
+                        description
+                    )
+                `)
                 .eq('store_id', storeId);
 
             if (storeProductsError) throw storeProductsError;
@@ -73,22 +83,14 @@ export default function ManageProductScreen() {
                 return;
             }
 
-            const barcodes = storeProducts.map((product: any) => product.product_barcode);
-
-            // Fetch product details for the assigned products
-            const { data: productDetails, error: productDetailsError } = await supabase
-                .from('products')
-                .select('barcode, name, description')
-                .in('barcode', barcodes);
-
-            if (productDetailsError) throw productDetailsError;
-
-            // Merge the assigned products with their details
-            const productsWithDetails = productDetails.map((product) => ({
-                ...product,
-                price: storeProducts.find((sp: any) => sp.product_barcode === product.barcode)?.price || 0,
-                stock: storeProducts.find((sp: any) => sp.product_barcode === product.barcode)?.stock || 0,
-                availability: storeProducts.find((sp: any) => sp.product_barcode === product.barcode)?.availability || true,
+            // Transform the joined data
+            const productsWithDetails = storeProducts.map((item: any) => ({
+                barcode: item.products.barcode,
+                name: item.products.name,
+                description: item.products.description,
+                price: item.price || 0,
+                stock: item.stock || 0,
+                availability: item.availability || true,
             }));
 
             setAssignedProducts(productsWithDetails);
@@ -198,8 +200,8 @@ export default function ManageProductScreen() {
         }
     };
 
-    const handleInputChange = (barcode: string, field: 'price' | 'stock' | 'availability', value: any) => {
-        const updatedProducts = assignedProducts.map((product) => {
+    const handleInputChange = useCallback((barcode: string, field: 'price' | 'stock' | 'availability', value: any) => {
+        setAssignedProducts(prevProducts => prevProducts.map((product) => {
             if (product.barcode === barcode) {
                 return {
                     ...product,
@@ -209,10 +211,9 @@ export default function ManageProductScreen() {
                 };
             }
             return product;
-        });
-        setAssignedProducts(updatedProducts);
+        }));
         setHasChanges(true);
-    };
+    }, []);
 
     // Helper function to handle text input with zero removal
     const handleTextInputChange = (barcode: string, field: 'price' | 'stock', text: string) => {
@@ -327,36 +328,11 @@ export default function ManageProductScreen() {
                 </View>
             </View>
 
-            <ScrollView
-                contentContainerStyle={styles.scrollContainer}
-                showsVerticalScrollIndicator={false}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={handleRefresh}
-                        colors={['#6c5ce7']}
-                        tintColor={'#6c5ce7'}
-                    />
-                }
-            >
-                {filteredProducts.length === 0 ? (
-                    <View style={styles.emptyState}>
-                        {searchQuery ? (
-                            <>
-                                <Ionicons name="search" size={48} color="#b2bec3" />
-                                <Text style={styles.emptyStateText}>No products found for "{searchQuery}"</Text>
-                                <Text style={styles.emptyStateSubText}>Try a different search term</Text>
-                            </>
-                        ) : (
-                            <>
-                                <Ionicons name="cube-outline" size={48} color="#b2bec3" />
-                                <Text style={styles.emptyStateText}>No products assigned to this store yet.</Text>
-                            </>
-                        )}
-                    </View>
-                ) : (
-                    filteredProducts.map((product) => (
-                        <View key={product.barcode} style={styles.productCard}>
+            <FlatList
+                data={filteredProducts}
+                keyExtractor={(item) => item.barcode}
+                renderItem={({ item: product }) => (
+                    <View style={styles.productCard}>
                             <View style={styles.productHeader}>
                                 <Text style={styles.productName}>{product.name}</Text>
                             </View>
@@ -432,10 +408,39 @@ export default function ManageProductScreen() {
                                     )}
                                 </TouchableOpacity>
                             </View>
-                        </View>
-                    ))
+                    </View>
                 )}
-            </ScrollView>
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        {searchQuery ? (
+                            <>
+                                <Ionicons name="search" size={48} color="#b2bec3" />
+                                <Text style={styles.emptyStateText}>No products found for "{searchQuery}"</Text>
+                                <Text style={styles.emptyStateSubText}>Try a different search term</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Ionicons name="cube-outline" size={48} color="#b2bec3" />
+                                <Text style={styles.emptyStateText}>No products assigned to this store yet.</Text>
+                            </>
+                        )}
+                    </View>
+                }
+                contentContainerStyle={styles.scrollContainer}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        colors={['#6c5ce7']}
+                        tintColor={'#6c5ce7'}
+                    />
+                }
+                initialNumToRender={8}
+                maxToRenderPerBatch={8}
+                windowSize={5}
+                removeClippedSubviews={true}
+            />
         </KeyboardAvoidingView>
     );
 }

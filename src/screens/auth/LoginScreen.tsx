@@ -298,24 +298,18 @@ export default function LoginScreen({ navigation }: Props) {
             console.log('✅ Login successful');
             if (data.session) {
                 console.log('✅ Session created successfully');
-                // Set navigation flag BEFORE checking admin
-                isNavigating.current = true;
 
                 const isAdmin = await verifyAdmin();
                 console.log('👤 User is admin:', isAdmin);
 
-                showStyledAlert(
-                    "Welcome Back! 🎉",
-                    "You've successfully logged in to your account.",
-                    () => {
-                        console.log('User pressed OK, navigating to Main');
-                        setStyledAlertVisible(false);
-                        setTimeout(() => {
-                            navigation.replace('Main');
-                        }, 100);
-                    }
-                );
+                // Set navigation flag and navigate immediately
+                isNavigating.current = true;
+                
+                // Navigate to Main screen
+                console.log('🚀 Navigating to Main screen');
+                navigation.replace('Main');
 
+                // Show success message after navigation (optional)
                 if (isAdmin) {
                     setTimeout(() => {
                         showStyledAlert(
@@ -323,23 +317,28 @@ export default function LoginScreen({ navigation }: Props) {
                             'You can access admin features from your profile.',
                             () => setStyledAlertVisible(false)
                         );
-                    }, 2000);
+                    }, 1000);
                 }
             }
 
         } catch (error: any) {
             console.error('❌ Login exception:', error);
-            // Reset states on error
-            isNavigating.current = false;
-            isLoggingIn.current = false;
-            setLoginLoading(false);
+            // Only show error if we're not navigating
+            if (!isNavigating.current) {
+                // Reset states on error
+                isNavigating.current = false;
+                isLoggingIn.current = false;
+                setLoginLoading(false);
+            }
         } finally {
-            // FIXED: Always reset loading state in finally block
-            // The navigation guard should only prevent duplicate navigations,
-            // not prevent UI cleanup
-            console.log('🔄 Resetting login state in finally block');
-            setLoginLoading(false);
-            isLoggingIn.current = false;
+            // Only reset loading state if navigation didn't happen
+            if (!isNavigating.current) {
+                console.log('🔄 Resetting login state in finally block');
+                setLoginLoading(false);
+                isLoggingIn.current = false;
+            } else {
+                console.log('✅ Navigation in progress, keeping loading state');
+            }
         }
     };
 

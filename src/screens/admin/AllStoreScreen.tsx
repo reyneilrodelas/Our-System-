@@ -12,7 +12,9 @@ import {
     TouchableWithoutFeedback,
     Dimensions,
     Alert,
-    TextInput
+    TextInput,
+    KeyboardAvoidingView,
+    Platform
 } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
@@ -795,7 +797,14 @@ export default function AllStoresScreen() {
                 animationType="slide"
                 onRequestClose={() => setRejectionModalVisible(false)}
             >
-                <View style={styles.rejectionModalContainer}>
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={styles.rejectionModalContainer}
+                >
+                    <TouchableWithoutFeedback onPress={() => setRejectionModalVisible(false)}>
+                        <View style={styles.rejectionModalOverlay} />
+                    </TouchableWithoutFeedback>
+                    
                     <View style={styles.rejectionModalContent}>
                         <View style={styles.rejectionModalHeader}>
                             <Text style={styles.rejectionModalTitle}>Reject Store</Text>
@@ -817,6 +826,8 @@ export default function AllStoresScreen() {
                                     value={rejectionReason}
                                     onChangeText={setRejectionReason}
                                     textAlignVertical="top"
+                                    autoFocus={true}
+                                    selectionColor="#4A90E2"
                                 />
 
                                 <View style={styles.rejectionButtonContainer}>
@@ -839,7 +850,7 @@ export default function AllStoresScreen() {
                             </>
                         )}
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
@@ -1186,8 +1197,11 @@ const styles = StyleSheet.create({
     },
     rejectionModalContainer: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
         justifyContent: 'flex-end',
+    },
+    rejectionModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
     rejectionModalContent: {
         backgroundColor: '#fff',
@@ -1196,7 +1210,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: 20,
         paddingBottom: 30,
-        maxHeight: '80%',
+        maxHeight: '70%',
     },
     rejectionModalHeader: {
         flexDirection: 'row',
@@ -1230,7 +1244,8 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         padding: 12,
         fontSize: 14,
-        color: '#333',
+        color: '#000',
+        backgroundColor: '#fff',
         marginBottom: 20,
         maxHeight: 120,
     },

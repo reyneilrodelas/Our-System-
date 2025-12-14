@@ -22,12 +22,6 @@ import { fontFamily } from '../../Styles/fontFamily';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
-// Helper function to verify admin status
-const verifyAdmin = async (): Promise<boolean> => {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    return !error && user?.user_metadata?.role === 'admin';
-};
-
 export default function LoginScreen({ navigation }: Props) {
     const [secureTextEntry, setSecureTextEntry] = useState(true);
     const [email, setEmail] = useState('');
@@ -296,10 +290,11 @@ export default function LoginScreen({ navigation }: Props) {
 
             // Login successful
             console.log('✅ Login successful');
-            if (data.session) {
+            if (data.session && data.user) {
                 console.log('✅ Session created successfully');
 
-                const isAdmin = await verifyAdmin();
+                // Check admin status directly from user metadata (no additional API call)
+                const isAdmin = data.user.user_metadata?.role === 'admin';
                 console.log('👤 User is admin:', isAdmin);
 
                 // Set navigation flag and navigate immediately
